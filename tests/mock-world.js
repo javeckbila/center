@@ -65,11 +65,14 @@ function createMockWorld(options) {
     iron: { name: "iron_ore" }, deepslateIron: { name: "deepslate_iron_ore" },
     diamond: { name: "diamond_ore" }, deepslateDiamond: { name: "deepslate_diamond_ore" },
     debris: { name: "ancient_debris" },
+    purpleGlazed: { name: "purple_glazed_terracotta" }, redGlazed: { name: "red_glazed_terracotta" },
+    limeGlazed: { name: "lime_glazed_terracotta" },
     completed: [], packets: [], aborts: [], nativeStarts: [],
     // Receives every ServerboundPlayerActionPacket "sent" by the simulated client.
     packetSink: function () {},
   };
-  var targetBlocks = [w.cobble, w.iron, w.deepslateIron, w.diamond, w.deepslateDiamond, w.debris];
+  var targetBlocks = [w.cobble, w.iron, w.deepslateIron, w.diamond, w.deepslateDiamond, w.debris,
+    w.purpleGlazed, w.redGlazed, w.limeGlazed];
   var BLOCK = { name: "BLOCK" };
   var MISS = { name: "MISS" };
   var actions = { START_DESTROY_BLOCK: { name: "START" }, STOP_DESTROY_BLOCK: { name: "STOP" }, ABORT_DESTROY_BLOCK: { name: "ABORT" } };
@@ -201,6 +204,7 @@ function createMockWorld(options) {
     HitType: { BLOCK: BLOCK }, Blocks: {
       COBBLESTONE: w.cobble, IRON_ORE: w.iron, DEEPSLATE_IRON_ORE: w.deepslateIron,
       DIAMOND_ORE: w.diamond, DEEPSLATE_DIAMOND_ORE: w.deepslateDiamond, ANCIENT_DEBRIS: w.debris,
+      GLAZED_TERRACOTTA: { purple: () => w.purpleGlazed, red: () => w.redGlazed, lime: () => w.limeGlazed },
     }, ItemTags: { PICKAXES: 1 },
     PlayerActionPacket: ActionPacket, PlayerAction: actions, InteractionHand: { MAIN_HAND: "MAIN_HAND" },
   };

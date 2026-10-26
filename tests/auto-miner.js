@@ -233,7 +233,8 @@ test("background mining never grabs another application's mouse", function () {
 // ---------- targeting ----------
 
 test("every supported material is mined at floor, feet, head and overhead height", function () {
-  ["cobble", "iron", "deepslateIron", "diamond", "deepslateDiamond", "debris"].forEach(function (material) {
+  ["cobble", "iron", "deepslateIron", "diamond", "deepslateDiamond", "debris",
+    "purpleGlazed", "redGlazed", "limeGlazed"].forEach(function (material) {
     [63, 64, 65, 66, 67].forEach(function (y) {
       var h = harness({ simulateMining: true });
       var id = "0," + y + ",1";

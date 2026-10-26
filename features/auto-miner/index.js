@@ -209,7 +209,7 @@ module.exports = defineFeature({
   id: ID,
   name: "Auto Miner",
   category: "Automation",
-  description: "Mines all visible, reachable cobblestone, iron ore, diamond ore and ancient debris; selects a hotbar pickaxe automatically.",
+  description: "Mines reachable cobblestone, iron ore, diamond ore, ancient debris, and purple, red or lime glazed terracotta; selects a hotbar pickaxe automatically.",
   persistEnabled: false, // a macro must never resume by itself after a reload
   settings: [
     {
@@ -250,7 +250,7 @@ module.exports = defineFeature({
       now: () => Clock.nanoTime() / 1e9,
       inGui: () => Client.isInGui(),
       glide: () => f.get("glide"),
-      onStart: () => say("&aOn. Mining all reachable cobblestone, iron ore, diamond ore and ancient debris; your footing is kept."),
+      onStart: () => say("&aOn. Mining reachable cobblestone, iron ore, diamond ore, ancient debris, and purple, red or lime glazed terracotta; your footing is kept."),
       onHalt: (reason, opts) => onHalt(f, reason, opts),
     });
 

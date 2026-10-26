@@ -15,6 +15,7 @@ function createWorld(T) {
   const targetBlocks = [
     T.Blocks.COBBLESTONE, T.Blocks.IRON_ORE, T.Blocks.DEEPSLATE_IRON_ORE,
     T.Blocks.DIAMOND_ORE, T.Blocks.DEEPSLATE_DIAMOND_ORE, T.Blocks.ANCIENT_DEBRIS,
+    T.Blocks.GLAZED_TERRACOTTA.purple(), T.Blocks.GLAZED_TERRACOTTA.red(), T.Blocks.GLAZED_TERRACOTTA.lime(),
   ];
   function isTarget(game, pos) {
     const state = game.level.getBlockState(pos);
