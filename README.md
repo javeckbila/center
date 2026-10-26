@@ -25,6 +25,17 @@ pause on lost focus is still disabled for the run and restored on stop.
 Personal settings and routes are stored in the uncommitted `config.json`.
 See [Auto Farm](features/auto-farm/README.md) for waypoint and config commands.
 
+## Auto Miner player avoidance
+
+Auto Miner skips aim points blocked by another player and releases attack if
+someone steps into its mining ray. When a player overlaps you, it walks one
+block in a clear direction and resumes mining there. It returns to the original
+starting position if that player follows into you, after the area clears for
+one second, or when the eight-second sidestep timer expires. Walls, unsafe ground and
+occupied destinations prevent a sidestep; normal walk-home safety checks apply.
+The original starting floor is preserved while mining from the temporary spot.
+Reload with `/ct load` to apply this update.
+
 ## Checks
 
 From the ChatTriggers modules folder, run:

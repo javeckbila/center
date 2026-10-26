@@ -43,6 +43,24 @@ class Box {
     this.minX = minX; this.minY = minY; this.minZ = minZ; this.maxX = maxX; this.maxY = maxY; this.maxZ = maxZ;
   }
   move(dx, dy, dz) { return new Box(this.minX + dx, this.minY + dy, this.minZ + dz, this.maxX + dx, this.maxY + dy, this.maxZ + dz); }
+  inflate(n) { return new Box(this.minX - n, this.minY - n, this.minZ - n, this.maxX + n, this.maxY + n, this.maxZ + n); }
+  contains(v) { return v.x >= this.minX && v.x < this.maxX && v.y >= this.minY && v.y < this.maxY && v.z >= this.minZ && v.z < this.maxZ; }
+  intersects(b) {
+    return this.minX < b.maxX && this.maxX > b.minX && this.minY < b.maxY && this.maxY > b.minY && this.minZ < b.maxZ && this.maxZ > b.minZ;
+  }
+  clip(start, end) {
+    var low = 0, high = 1;
+    for (var axis of ["x", "y", "z"]) {
+      var delta = end[axis] - start[axis], key = axis.toUpperCase();
+      if (Math.abs(delta) < 1e-9) {
+        if (start[axis] < this["min" + key] || start[axis] > this["max" + key]) return { isPresent: () => false };
+      } else {
+        var a = (this["min" + key] - start[axis]) / delta, b = (this["max" + key] - start[axis]) / delta;
+        low = Math.max(low, Math.min(a, b)); high = Math.min(high, Math.max(a, b));
+      }
+    }
+    return { isPresent: () => low <= high };
+  }
 }
 class ActionPacket {
   constructor(action, pos) { this.action = action; this.pos = pos; }
@@ -67,7 +85,7 @@ function createMockWorld(options) {
     debris: { name: "ancient_debris" },
     purpleGlazed: { name: "purple_glazed_terracotta" }, redGlazed: { name: "red_glazed_terracotta" },
     limeGlazed: { name: "lime_glazed_terracotta" },
-    completed: [], packets: [], aborts: [], nativeStarts: [],
+    completed: [], packets: [], aborts: [], nativeStarts: [], players: [],
     // Receives every ServerboundPlayerActionPacket "sent" by the simulated client.
     packetSink: function () {},
   };
@@ -124,6 +142,7 @@ function createMockWorld(options) {
   };
 
   var level = {
+    players: function () { return [player].concat(w.players); },
     getBlockState: function (p) {
       return {
         is: function (b) { return w.blocks.get(blockId(p)) === b; },
@@ -201,6 +220,16 @@ function createMockWorld(options) {
 
   w.game = game;
   w.player = player;
+  w.addPlayer = function (x, y, z) {
+    var other = {
+      x: x, y: y, z: z, alive: true, spectator: false, uuid: "other-" + w.players.length,
+      getUUID: function () { return this.uuid; }, isAlive: function () { return this.alive; },
+      isSpectator: function () { return this.spectator; },
+      getBoundingBox: player.getBoundingBox,
+    };
+    w.players.push(other);
+    return other;
+  };
   w.actions = actions;
   w.T = {
     BlockPos: Pos, Vec3: Vec, ClipContext: Clip, ClipBlock: { OUTLINE: 1 }, ClipFluid: { NONE: 1 },

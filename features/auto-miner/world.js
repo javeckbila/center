@@ -23,7 +23,50 @@ function createWorld(T) {
   }
 
   function cast(game, end) {
-    return game.level.clip(new T.ClipContext(game.player.getEyePosition(), end, T.ClipBlock.OUTLINE, T.ClipFluid.NONE, game.player));
+    const hit = game.level.clip(new T.ClipContext(game.player.getEyePosition(), end, T.ClipBlock.OUTLINE, T.ClipFluid.NONE, game.player));
+    if (hit.getType() === T.HitType.BLOCK && playerBlocksRay(game, hit.getLocation())) return null;
+    return hit;
+  }
+
+  function otherPlayers(game) {
+    const self = String(game.player.getUUID());
+    return Array.from(game.level.players()).filter(p => String(p.getUUID()) !== self && p.isAlive() && !p.isSpectator());
+  }
+
+  // Block-only level.clip ignores entities. Include the eye being inside a
+  // player, which AABB.clip alone does not reliably report as an entry hit.
+  function playerBlocksRay(game, end) {
+    const eye = game.player.getEyePosition();
+    return otherPlayers(game).some(p => {
+      const box = p.getBoundingBox().inflate(0.1);
+      return box.contains(eye) || box.clip(eye, end).isPresent();
+    });
+  }
+
+  function occupied(game, spot) {
+    const p = game.player;
+    const box = spot ? p.getBoundingBox().move(spot.x - p.getX(), spot.y - p.getY(), spot.z - p.getZ()) : p.getBoundingBox();
+    return otherPlayers(game).some(other => box.intersects(other.getBoundingBox()));
+  }
+
+  // Escape players already sharing our box, but do not walk into a third
+  // player. Ground, walls and fluids are still checked over the whole path.
+  function sidestep(game, anchor) {
+    const p = game.player;
+    const from = { x: p.getX(), z: p.getZ() };
+    const box = p.getBoundingBox();
+    const others = otherPlayers(game).filter(other => !box.intersects(other.getBoundingBox()));
+    for (const d of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const spot = { x: anchor.x + d[0], y: anchor.y, z: anchor.z + d[1] };
+      if (occupied(game, spot) || !walkable(game, from, spot, anchor.y)) continue;
+      let clear = true;
+      for (let i = 1; i <= 8 && clear; i++) {
+        const step = box.move((spot.x - from.x) * i / 8, 0, (spot.z - from.z) * i / 8);
+        if (others.some(other => step.intersects(other.getBoundingBox()))) clear = false;
+      }
+      if (clear) return spot;
+    }
+    return null;
   }
 
   const hits = (hit, pos) => !!hit && hit.getType() === T.HitType.BLOCK && hit.getBlockPos().equals(pos);
@@ -103,7 +146,8 @@ function createWorld(T) {
     return info ? clamp(info.getLatency(), 0, 2000) : 0;
   }
 
-  return { blockPos, isTarget, cast, hits, inReach, visiblePoint, rayAt, cameraRay, holdsPickaxe, selectPickaxe, walkable, latency };
+  return { blockPos, isTarget, cast, hits, inReach, visiblePoint, rayAt, cameraRay, holdsPickaxe, selectPickaxe, walkable, latency,
+    occupied, sidestep };
 }
 
 module.exports = { createWorld };

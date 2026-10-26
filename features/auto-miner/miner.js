@@ -1,6 +1,6 @@
 // Auto miner core. Stationary mining of all reachable target blocks with
 // smooth camera motion ("ping glide") and a
-// walk-home controller when the player is pushed.
+// walk-home controller when the player is pushed, and temporary player avoidance.
 //
 // Vanilla does the mining: the miner only aims the camera and holds the attack
 // binding. The first break of a run is started with the same
@@ -39,6 +39,10 @@ const EXIT_MARGIN = 0.88;     // fraction of the in-silhouette path used by pre-
 const IDLE_PITCH = 68;
 const DRIFT_AMOUNT = 0.026;   // blocks of aim-point drift at glide 1
 const TICK_SECONDS = 0.05;
+const SIDESTEP_SECONDS = 8;  // maximum time away, including the outward walk
+const CLEAR_SECONDS = 1;     // return once the player has left for this long
+const FOLLOW_SECONDS = 0.4;  // overlap at the temporary spot before returning
+const SIDESTEP_COOLDOWN = 3; // avoid immediately bouncing out again on return
 
 const vector = v => ({ x: v.x, y: v.y, z: v.z });
 const blockKey = pos => pos.x + "," + pos.y + "," + pos.z;
@@ -73,6 +77,8 @@ function createMiner(deps) {
   let cleared = 0;
   let attackOwned = false;
   let rec = null;
+  let avoidance = null;
+  let nextSidestep = 0;
   let lastInput = "no mining tick observed";
   const movementOwned = new Set();
   const cooldowns = new Map();
@@ -145,8 +151,9 @@ function createMiner(deps) {
   }
 
   function displaced(player) {
-    return G.hypot(player.getX() - anchor.x, player.getZ() - anchor.z) > HOME_DRIFT ||
-      Math.abs(player.getY() - anchor.y) > HOME_HEIGHT;
+    const spot = avoidance ? avoidance.spot : anchor;
+    return G.hypot(player.getX() - spot.x, player.getZ() - spot.z) > HOME_DRIFT ||
+      Math.abs(player.getY() - spot.y) > HOME_HEIGHT;
   }
 
   function refusalReason(game) {
@@ -175,6 +182,7 @@ function createMiner(deps) {
     nextTarget = null;
     anchor = null;
     rec = null;
+    avoidance = null;
     deps.view.stop();
     setStatus("off", reason || "Off");
     return true;
@@ -208,6 +216,8 @@ function createMiner(deps) {
     nextPing = 0;
     lastFrame = time;
     rec = null;
+    avoidance = null;
+    nextSidestep = 0;
     startup.needed = true;
     startup.lastAttempt = -Infinity;
     startup.attempts = 0;
@@ -228,10 +238,13 @@ function createMiner(deps) {
 
   function findTarget(game, time, excluded) {
     const box = game.player.getBoundingBox();
+    const homeBox = avoidance ? box.move(anchor.x - game.player.getX(), anchor.y - game.player.getY(), anchor.z - game.player.getZ()) : null;
     const eye = vector(game.player.getEyePosition());
     const candidates = [];
     for (const block of G.reachBlocks(eye, game.player.blockInteractionRange())) {
       if (G.supportsFeet(block, anchor.supportY, box)) continue;
+      // Keep the saved home floor intact while mining from the temporary spot.
+      if (homeBox && G.supportsFeet(block, anchor.supportY, homeBox)) continue;
       const id = blockKey(block);
       const pos = W.blockPos(block.x, block.y, block.z);
       const eligible = W.isTarget(game, pos);
@@ -342,28 +355,63 @@ function createMiner(deps) {
 
   // ---------- walk home ----------
 
-  function beginReturn(game, time) {
+  function pauseForWalk(game, time) {
     releaseAttack(game);
+    movement.release();
     target = null;
     nextTarget = null;
     startup.needed = true;
     startup.lastAttempt = -Infinity;
     rec = recovery.begin(game.player, time);
+  }
+
+  function beginReturn(game, time) {
+    avoidance = null;
+    nextSidestep = time + SIDESTEP_COOLDOWN;
+    pauseForWalk(game, time);
     setStatus("returning", "Returning to start");
   }
 
   function walkHome(game, time) {
     if (!rec) beginReturn(game, time);
-    const result = recovery.update(game, time, anchor, rec, movement, W);
-    if (result.failure) return halt(result.failure);
+    const result = recovery.update(game, time, avoidance ? avoidance.spot : anchor, rec, movement, W);
+    if (result.failure) {
+      if (avoidance) return beginReturn(game, time);
+      return halt(result.failure);
+    }
     if (result.done) {
       rec = null;
+      if (avoidance) avoidance.arrived = true;
       nextScan = 0;
       lastFrame = time;
       setStatus("scanning", "Scanning");
       return;
     }
-    setStatus("returning", result.status);
+    setStatus(avoidance ? "sidestepping" : "returning", avoidance ? "Moving aside for player" : result.status);
+  }
+
+  function avoidPlayers(game, time) {
+    if (avoidance) {
+      const occupied = W.occupied(game);
+      // A player may remain at home while we mine beside them; clearing both
+      // spots starts the timer. Following us triggers an earlier return.
+      const nearby = occupied || W.occupied(game, anchor);
+      if (nearby) avoidance.clearSince = null;
+      else if (avoidance.clearSince === null) avoidance.clearSince = time;
+      if (!avoidance.arrived || !occupied) avoidance.followSince = null;
+      else if (avoidance.followSince === null) avoidance.followSince = time;
+      if (time >= avoidance.returnAt ||
+        (avoidance.clearSince !== null && time - avoidance.clearSince >= CLEAR_SECONDS) ||
+        (avoidance.followSince !== null && time - avoidance.followSince >= FOLLOW_SECONDS) ||
+        (!rec && (displaced(game.player) || !game.player.onGround()))) beginReturn(game, time);
+    } else if (!rec && !displaced(game.player) && game.player.onGround() && time >= nextSidestep && W.occupied(game)) {
+      nextSidestep = time + SIDESTEP_COOLDOWN;
+      const spot = W.sidestep(game, anchor);
+      if (spot) {
+        avoidance = { spot, arrived: false, returnAt: time + SIDESTEP_SECONDS, clearSince: null, followSince: null };
+        pauseForWalk(game, time);
+      }
+    }
   }
 
   // ---------- per tick: targets, attack, watchdogs ----------
@@ -378,6 +426,7 @@ function createMiner(deps) {
       if (target) { target.started = false; target.lastStage = -1; target.lastProgress = now(); }
     }
     const time = now();
+    avoidPlayers(game, time);
     if (rec || displaced(game.player) || !game.player.onGround()) return walkHome(game, time);
     updatePing(game, time);
     refreshTarget(game, time, true);
@@ -465,6 +514,9 @@ function createMiner(deps) {
     // A STOP_DESTROY_BLOCK packet is enough to hand off, even before the server's
     // replacement block arrives.
     refreshTarget(game, time, false);
+    // Other players can enter the ray between ticks, even while the camera is
+    // held on the same block. Release before doing any spring correction.
+    if (attackOwned && !W.hits(W.cameraRay(game), target && target.pos)) releaseAttack(game);
     stage = target && target.started ? game.gameMode.getDestroyStage() : -1;
     const dt = G.clamp(time - lastFrame, 0, 0.1);
     lastFrame = time;
@@ -546,7 +598,8 @@ function createMiner(deps) {
   function state() {
     return {
       phase, running: phase === "running", activity, status, stage,
-      returning: rec !== null,
+      returning: rec !== null && !avoidance,
+      sidestepping: avoidance !== null,
       homeX: anchor ? anchor.x : null,
       homeZ: anchor ? anchor.z : null,
       target: target ? target.id : null,

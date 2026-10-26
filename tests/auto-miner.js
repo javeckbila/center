@@ -689,4 +689,148 @@ test("being pushed too far stops the miner with a reason", function () {
   eq(h.halts[0].reason, "Too far from the starting spot to walk back");
 });
 
+// ---------- other players ----------
+
+test("player hitboxes hide blocks, but not blocks in front of or beside them", function () {
+  var h = harness();
+  var world = require("center/features/auto-miner/world").createWorld(h.w.T);
+  var pos = world.blockPos(0, 65, 3);
+  h.w.blocks.set("0,65,3", h.w.cobble);
+  var other = h.w.addPlayer(0.5, 64, 2);
+  eq(world.visiblePoint(h.game, pos), null, "all faces occluded by player");
+  other.z = 4.5;
+  ok(world.visiblePoint(h.game, pos), "player behind block does not occlude it");
+  other.x = 2; other.z = 2;
+  ok(world.visiblePoint(h.game, pos), "player beside ray does not occlude it");
+  other.x = 0.5;
+  other.spectator = true;
+  ok(world.visiblePoint(h.game, pos), "spectators ignored");
+  other.spectator = false; other.alive = false;
+  ok(world.visiblePoint(h.game, pos), "dead players ignored");
+});
+
+test("a player entering the mining ray releases attack between ticks and retargets", function () {
+  var h = harness();
+  h.w.blocks.set("0,65,3", h.w.cobble);
+  ok(h.begin());
+  h.run(100, function () { return h.opts.keyAttack.down; });
+  ok(h.opts.keyAttack.down, "mining before obstruction");
+  h.w.addPlayer(0.5, 64, 2);
+  h.step();
+  eq(h.opts.keyAttack.down, false, "released on the next frame");
+  h.run(20);
+  eq(h.s().target, null, "occluded target dropped");
+  eq(h.w.nativeStarts.length, 1, "no new break through player");
+  h.w.blocks.set("-2,63,0", h.w.cobble);
+  h.run(100, function () { return h.opts.keyAttack.down; });
+  ok(h.opts.keyAttack.down, "unobstructed target used instead");
+  eq(h.s().target, "-2,63,0");
+});
+
+function startSidestep() {
+  var h = harness({ simulateWalking: true, simulateMining: true });
+  h.floor(-2, 3, -2, 3);
+  h.w.blocks.set("2,63,0", h.w.cobble);
+  ok(h.begin());
+  h.other = h.w.addPlayer(0.5, 64, 0.5);
+  h.cycle();
+  ok(h.s().sidestepping, "walking aside");
+  eq(h.opts.keyAttack.down, false, "no mining while walking");
+  h.run(80, function () { return h.s().sidestepping && h.s().activity !== "sidestepping"; });
+  ok(h.s().sidestepping, "temporary spot retained");
+  ok(Math.abs(h.w.player.x - 1.5) <= 0.06, "one block to the side");
+  eq(h.s().homeX, 0.5); eq(h.s().homeZ, 0.5);
+  return h;
+}
+
+function checkReturned(h) {
+  h.run(220, function () { return !h.s().sidestepping && !h.s().returning; });
+  ok(h.s().running, "still enabled");
+  eq(h.s().sidestepping, false); eq(h.s().returning, false);
+  ok(GEO.hypot(h.w.player.x - 0.5, h.w.player.z - 0.5) <= 0.06, "at original position");
+  ["keyUp", "keyDown", "keyLeft", "keyRight", "keyShift"].forEach(function (key) { eq(h.opts[key].down, false, key); });
+}
+
+test("an overlapping player causes a one-block sidestep and mining resumes there", function () {
+  var h = startSidestep();
+  h.run(50, function () { return h.w.completed.length > 0; });
+  ok(h.w.completed.some(function (b) { return b.id === "2,63,0"; }), "mines from temporary spot");
+  ok(h.s().sidestepping);
+  checkReturned(h); // hard deadline applies even with the player still at home
+  h.cycle();
+  eq(h.s().sidestepping, false, "return has a cooldown");
+});
+
+test("following into the temporary spot causes an early return home", function () {
+  var h = startSidestep();
+  var time = h.w.clock;
+  h.other.x = h.w.player.x; h.other.z = h.w.player.z;
+  checkReturned(h);
+  ok(h.w.clock - time < 3, "returned without waiting for the deadline");
+});
+
+test("the miner returns early when the obstructing player leaves", function () {
+  var h = startSidestep();
+  var time = h.w.clock;
+  h.w.players = [];
+  checkReturned(h);
+  ok(h.w.clock - time < 4, "returns shortly after player leaves");
+});
+
+test("a player leaving during the outward walk still returns to the original spot", function () {
+  var h = harness({ simulateWalking: true });
+  h.floor(-2, 2, -2, 2); ok(h.begin());
+  h.w.addPlayer(0.5, 64, 0.5); h.cycle();
+  ok(h.s().sidestepping);
+  h.w.players = [];
+  checkReturned(h);
+});
+
+test("sidesteps choose a different clear direction and reject unsafe floors", function () {
+  var h = harness({ simulateWalking: true });
+  h.floor(-2, 2, -2, 2);
+  h.w.blocks.set("1,64,0", h.w.stone); // east is a wall
+  h.w.addPlayer(-0.5, 64, 0.5); // west is occupied
+  h.w.blocks.delete("0,63,1"); // south is a hole
+  ok(h.begin()); h.w.addPlayer(0.5, 64, 0.5);
+  h.run(50);
+  ok(h.s().sidestepping, "north chosen");
+  ok(Math.abs(h.w.player.z + 0.5) <= 0.06, "walks north");
+  ok(Math.abs(h.w.player.x - 0.5) <= 0.06);
+
+  var blocked = harness({ simulateWalking: true });
+  blocked.floor(0, 0, 0, 0); ok(blocked.begin());
+  blocked.w.blocks.set("0,65,3", blocked.w.cobble);
+  blocked.w.addPlayer(0.5, 64, 0.5); blocked.run(40);
+  ok(blocked.s().running); eq(blocked.s().sidestepping, false);
+  eq(blocked.w.player.x, 0.5); eq(blocked.w.player.z, 0.5);
+  eq(blocked.opts.keyAttack.down, false);
+  eq(blocked.w.nativeStarts.length, 0, "eye inside player never starts a break through them");
+});
+
+test("home support is never mined while standing at the temporary spot", function () {
+  var h = startSidestep();
+  h.w.blocks.set("0,63,0", h.w.cobble);
+  h.run(80);
+  eq(h.w.blocks.get("0,63,0"), h.w.cobble, "original floor preserved");
+  checkReturned(h);
+});
+
+test("a push from the temporary spot returns home instead of choosing a new anchor", function () {
+  var h = startSidestep();
+  h.w.player.x = 2.3;
+  checkReturned(h);
+  eq(h.s().homeX, 0.5);
+});
+
+test("stopping during a sidestep releases every owned key and resets avoidance", function () {
+  var h = harness(); h.floor(-2, 2, -2, 2); ok(h.begin());
+  h.w.addPlayer(0.5, 64, 0.5); h.cycle();
+  ok(h.s().sidestepping);
+  h.miner.stop("Off");
+  ["keyAttack", "keyUp", "keyDown", "keyLeft", "keyRight", "keyShift"].forEach(function (key) { eq(h.opts[key].down, false, key); });
+  eq(h.s().sidestepping, false);
+  eq(h.opts.pauseOnLostFocus, true);
+});
+
 print(passed + " tests passed");
