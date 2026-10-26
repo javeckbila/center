@@ -1,0 +1,9 @@
+{
+  "name": "center",
+  "creator": "adass",
+  "version": "1.1.0",
+  "entry": "index.js",
+  "description": "Control center: one menu to toggle and configure every module.",
+  "tags": ["utility", "gui"],
+  "ignored": ["tests"]
+}
