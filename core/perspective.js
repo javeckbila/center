@@ -1,6 +1,7 @@
 // Independent view angles and reversible options for one automation run.
 // No CT globals: the live adapter and Rhino tests supply the game and view type.
 function createPerspective(deps) {
+  const perspectiveEnabled = deps.thirdPerson != null;
   let session = null;
   let yaw = 0, pitch = 0;
 
@@ -8,7 +9,7 @@ function createPerspective(deps) {
     if (!session) return;
     const saved = session;
     session = null; // release interception even if restoring an option throws
-    try { saved.options.setCameraType(saved.cameraType); }
+    try { if (perspectiveEnabled) saved.options.setCameraType(saved.cameraType); }
     finally { saved.options.pauseOnLostFocus = saved.pauseOnLostFocus; }
   }
 
@@ -20,10 +21,10 @@ function createPerspective(deps) {
     yaw = game.player.getYRot();
     pitch = game.player.getXRot();
     session = { game, player: game.player, level: game.level, options,
-      cameraType: options.getCameraType(), pauseOnLostFocus: options.pauseOnLostFocus };
+      cameraType: perspectiveEnabled ? options.getCameraType() : null, pauseOnLostFocus: options.pauseOnLostFocus };
     try {
       options.pauseOnLostFocus = false;
-      options.setCameraType(deps.thirdPerson);
+      if (perspectiveEnabled) options.setCameraType(deps.thirdPerson);
     } catch (error) { stop(); throw error; }
   }
 
@@ -40,14 +41,14 @@ function createPerspective(deps) {
   // Deltas already include vanilla sensitivity, inversion and smooth-camera
   // settings. Entity.turn normally converts them to degrees with this factor.
   function turn(dx, dy) {
-    if (!active()) return false;
+    if (!active() || !perspectiveEnabled) return false;
     yaw = ((yaw + dx * 0.15 + 180) % 360 + 360) % 360 - 180;
     pitch = Math.max(-90, Math.min(90, pitch + dy * 0.15));
     return true;
   }
 
   function rotation(entity) {
-    if (!active() || entity !== session.player) return null;
+    if (!active() || !perspectiveEnabled || entity !== session.player) return null;
     // Keep the view in rear third person if F5 is pressed during a run.
     if (session.options.getCameraType() !== deps.thirdPerson) session.options.setCameraType(deps.thirdPerson);
     return { yaw, pitch };

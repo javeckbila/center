@@ -18,6 +18,9 @@ F5 stays in rear third person while automation owns the view.
 **Restart Minecraft after installing this version or changing `mixins.js`.**
 `/ct load` can reload ordinary code, but cannot install these camera/mouse hooks
 into an already running game.
+If loaded before that restart, Center and its automations remain available
+with your normal view. A reminder appears on the first automation start;
+pause on lost focus is still disabled for the run and restored on stop.
 
 Personal settings and routes are stored in the uncommitted `config.json`.
 See [Auto Farm](features/auto-farm/README.md) for waypoint and config commands.

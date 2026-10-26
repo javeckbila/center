@@ -19,6 +19,11 @@ try {
         java -cp $rhino (Join-Path $PSScriptRoot "RhinoRun.java") . $suite
         if ($LASTEXITCODE -ne 0) { $failed++ }
     }
+    foreach ($missingHooks in @("both", "mouse", "camera")) {
+        Write-Host "== center/tests/runtime-mixins.js ($missingHooks unavailable)"
+        java "-Dcenter.test.missingHooks=$missingHooks" -cp $rhino (Join-Path $PSScriptRoot "RhinoRun.java") . "center/tests/runtime-mixins.js"
+        if ($LASTEXITCODE -ne 0) { $failed++ }
+    }
 } finally { Pop-Location }
 if ($failed -gt 0) { Write-Host "$failed suite(s) failed"; exit 1 }
 Write-Host "All suites passed"
