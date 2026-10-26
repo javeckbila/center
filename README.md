@@ -2,6 +2,22 @@
 
 Open `/center` or press Right Shift to configure the built-in features.
 
+## Anti AFK
+
+Enable **Anti AFK** under **Automation**, or use `/center toggle anti-afk`.
+By default, every four seconds it turns slightly, takes a brief side step,
+jumps, crouches, and taps attack at the crosshair. Turns and side steps
+alternate directions. Set the interval (2–30 seconds), turn angle, and each
+action separately in the menu. Attack can hit entities or break blocks.
+
+Screens and manual controls pause the actions; closing the screen or releasing
+the controls starts a fresh interval. While active it disables pause on lost
+focus, then restores your preference when paused or stopped. Switching between
+Anti AFK, Auto Miner and Auto Farm stops the previous automation. Anti AFK stops
+on disconnect, world unload and module reload, and always loads disabled.
+Use `/center off anti-afk` or its assigned toggle key to stop it.
+Reload with `/ct load` to add the feature; this change adds no mixins.
+
 ## Automation perspective
 
 Once Auto Miner or Auto Farm actually starts, Center switches to rear third

@@ -199,7 +199,7 @@ function rowY(labelText) { return findText(labelText).y - 7 - T.state.scroll; }
 test("module loads with interface + example modules and a /center command", function () {
   ok(center.defineFeature && center.open, "public API exported");
   ok(R.get("center") && infoHud && sprintF && R.get("auto-miner"), "features registered");
-  eq(R.all().length, 4, "interface group is hidden");
+  eq(R.all().length, 5, "interface group is hidden");
   ok(triggers.some(function (t) { return t.type === "command" && t.name === "center"; }), "/center registered");
   ok(triggers.some(function (t) { return t.type === "command" && t.name === "auto-miner"; }), "/auto-miner registered");
   eq(R.categories().join(","), "Automation,Movement,Render");
@@ -892,6 +892,51 @@ test("crop generation commands keep the old route on failure, cancellation and w
   fireCommand("auto-farm", "save", "generated"); fireCommand("auto-farm", "clear");
   fireCommand("auto-farm", "load", "generated");
   eq(ST.entry("auto-farm").route.crop, "minecraft:wheat", "profile restores generated-route validation");
+});
+
+test("Anti AFK loads disabled, exposes its settings, and works through /center", function () {
+  var afk = R.get("anti-afk");
+  ok(afk && !afk.isEnabled()); eq(afk.persistEnabled, false); eq(afk.get("interval"), 4);
+  ["rotate", "move", "jump", "crouch", "attack"].forEach(k => eq(afk.get(k), true));
+  currentScreen = null; mc.hitResult = null;
+  fireCommand("center", "on", "anti-afk"); ok(afk.isEnabled());
+  ticks(80); ok(mc.options.keyLeft.down, "side step started");
+  fireCommand("center", "off", "anti-afk"); ok(!afk.isEnabled());
+  eq(mc.options.keyLeft.down, false); eq(mc.options.pauseOnLostFocus, true);
+});
+
+test("Anti AFK and mining/farming always release the previous automation", function () {
+  var afk = R.get("anti-afk"), am = R.get("auto-miner");
+  currentScreen = null;
+  am.setEnabled(true); afk.setEnabled(true); ok(!am.isEnabled());
+  am.setEnabled(true); ok(!afk.isEnabled()); am.setEnabled(false);
+  farmFeature.setEnabled(true); afk.setEnabled(true); ok(!farmFeature.isEnabled());
+  farmFeature.setEnabled(true); ok(!afk.isEnabled()); farmFeature.setEnabled(false);
+  eq(mc.options.pauseOnLostFocus, true);
+});
+
+test("Anti AFK immediately releases on screens, world unload, settings edits and module shutdown", function () {
+  var afk = R.get("anti-afk");
+  currentScreen = null; mc.hitResult = null;
+  afk.setEnabled(true); ticks(80); ok(mc.options.keyLeft.down);
+  fire("guiopened", {}); eq(mc.options.keyLeft.down, false); ok(afk.isEnabled());
+  ticks(80); ok(mc.options.keyLeft.down);
+  afk.set("interval", 5); eq(mc.options.keyLeft.down, false);
+  ticks(100); ok(mc.options.keyLeft.down);
+  fire("worldunload"); eq(mc.options.keyLeft.down, false); frames(); ok(!afk.isEnabled());
+  afk.setEnabled(true); ticks(100); ok(mc.options.keyLeft.down);
+  fire("gameunload"); eq(mc.options.keyLeft.down, false); eq(mc.options.pauseOnLostFocus, true);
+  afk.setEnabled(false); afk.set("interval", 4);
+});
+
+test("an Anti AFK runtime error releases keys and disables the feature", function () {
+  var afk = R.get("anti-afk"); currentScreen = null;
+  afk.setEnabled(true); ticks(80); ok(mc.options.keyLeft.down);
+  var original = mc.player.getYRot;
+  mc.player.getYRot = function () { throw new Error("rotation failed"); };
+  ticks(1); mc.player.getYRot = original;
+  eq(mc.options.keyLeft.down, false); eq(mc.options.pauseOnLostFocus, true);
+  frames(); ok(!afk.isEnabled());
 });
 
 print(passed + " tests passed");

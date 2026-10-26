@@ -137,7 +137,7 @@ function createMockWorld(options) {
     getMainHandItem: function () { return inventory.getItem(w.selectedSlot); },
     getDestroySpeed: function () { return 8; }, getUUID: function () { return "uuid"; },
     swing: function () {},
-    isAlive: function () { return true; }, isPassenger: function () { return false; },
+    isAlive: function () { return true; }, isPassenger: function () { return false; }, isSleeping: function () { return false; },
     onGround: function () { return w.grounded; }, isUsingItem: function () { return false; },
   };
 
