@@ -2,6 +2,62 @@
 const { clamp, length } = require("./geometry");
 
 function createWorld(T) {
+  const cropName = state => String(T.BuiltInRegistries.BLOCK.getKey(state.getBlock()));
+  function survey(game, expectedCrop) {
+    const level = game.level, player = game.player, cache = new Map(), edges = new Map();
+    let missing = false;
+    const loaded = (x, z) => {
+      if (level.hasChunk(Math.floor(x / 16), Math.floor(z / 16))) return true;
+      missing = true; return false;
+    };
+    function block(x, y, z) { return level.getBlockState(new T.BlockPos(x, y, z)); }
+    const px = Math.floor(player.getX()), pz = Math.floor(player.getZ()), py = Math.floor(player.getY() + 0.1);
+    let crop = expectedCrop || null;
+    if (!crop && loaded(px, pz)) {
+      const state = block(px, py, pz), name = cropName(state);
+      if (state.getBlock() instanceof T.CropBlock || ["minecraft:nether_wart", "minecraft:sugar_cane",
+        "minecraft:melon_stem", "minecraft:pumpkin_stem", "minecraft:torchflower"].indexOf(name) >= 0) crop = name;
+    }
+    function box(x, y, z) { return new T.AABB(x - 0.32, y + 0.001, z - 0.32, x + 0.32, y + 1.82, z + 0.32); }
+    function clear(x, y, z) { return level.noCollision(player, box(x, y, z)); }
+    function tile(x, cy, z) {
+      const id = x + "," + cy + "," + z;
+      if (cache.has(id)) return cache.get(id);
+      let value = null;
+      if (crop && loaded(x, z) && cropName(block(x, cy, z)) === crop) {
+        const pos = new T.BlockPos(x, cy - 1, z), floor = level.getBlockState(pos);
+        const shape = floor.getCollisionShape(level, pos);
+        if (floor.getFluidState().isEmpty() && block(x, cy, z).getFluidState().isEmpty() && !shape.isEmpty()) {
+          const bounds = shape.bounds(), y = cy - 1 + bounds.maxY;
+          // Full soil surface, rather than fences, walls or partial ledges.
+          if (bounds.minX <= 0.18 && bounds.maxX >= 0.82 && bounds.minZ <= 0.18 && bounds.maxZ >= 0.82 &&
+              bounds.maxY <= 1 && clear(x + 0.5, y, z + 0.5)) value = { x, cy, z, y };
+        }
+      }
+      cache.set(id, value); return value;
+    }
+    function edge(a, b) {
+      if (Math.abs(a.x - b.x) + Math.abs(a.z - b.z) !== 1 || Math.abs(a.y - b.y) > 1.001) return false;
+      const aid = a.x + "," + a.cy + "," + a.z, bid = b.x + "," + b.cy + "," + b.z;
+      const id = aid < bid ? aid + ":" + bid : bid + ":" + aid;
+      if (edges.has(id)) return edges.get(id);
+      const raised = Math.abs(a.y - b.y) > 0.1;
+      const height = Math.max(a.y, b.y) + (raised ? 0.26 : 0);
+      let safe = true;
+      // Check the whole jump envelope, including takeoff and landing. Only
+      // reversible edges are admitted, so closing cannot require a deep drop.
+      for (let s = 0; s <= 8 && safe; s++) {
+        const t = s / 8;
+        safe = clear(a.x + 0.5 + (b.x - a.x) * t, height, a.z + 0.5 + (b.z - a.z) * t);
+        if (raised) safe = safe && clear(a.x + 0.5, a.y + (height - a.y) * t, a.z + 0.5) &&
+          clear(b.x + 0.5, b.y + (height - b.y) * t, b.z + 0.5);
+      }
+      edges.set(id, safe); return safe;
+    }
+    return { crop, seed: tile(px, py, pz), tile, edge, unloaded: () => missing };
+  }
+
+  function isCrop(game, pos, crop) { return cropName(game.level.getBlockState(pos)) === crop; }
   function usableHoe(stack) {
     return !!stack && !stack.isEmpty() && stack.is(T.ItemTags.HOES) &&
       (!stack.isDamageableItem() || stack.getMaxDamage() - stack.getDamageValue() > 1);
@@ -20,12 +76,12 @@ function createWorld(T) {
   // Check the full player box along the *actual* key direction, including its
   // leading edge. Look 2.5 movement ticks ahead, before horizontalCollision.
   // A raised box must fit at every sample; ceilings/tall walls cannot be jumped.
-  function terrain(game, direction) {
+  function terrain(game, direction, limit) {
     const player = game.player;
     const box = player.getBoundingBox().deflate(0.01, 0, 0.01);
     const motion = player.getDeltaMovement();
     const speed = length(motion.x, motion.z);
-    const ahead = clamp(0.35 + speed * 2.5, 0.55, 1.15);
+    const ahead = Math.min(clamp(0.35 + speed * 2.5, 0.55, 1.15), limit === undefined ? Infinity : Math.max(0.15, limit));
     let blocked = false;
     let raisedClear = game.level.noCollision(player, box.move(0, 1.05, 0));
     let supported = true;
@@ -73,7 +129,7 @@ function createWorld(T) {
     return normalPitch;
   }
 
-  return { selectHoe, terrain, lowerLayerPitch };
+  return { selectHoe, terrain, lowerLayerPitch, survey, isCrop };
 }
 
 module.exports = { createWorld };

@@ -4,9 +4,12 @@
 function renderRoute(T, game, route, target, accent) {
   const collection = game.levelRenderer.collectPerFrameRenderThreadGizmos();
   try {
+    let shown = 0;
     route.points.forEach((point, index) => {
+      if (shown >= 512 && index !== target) return;
       const dx = point.x - game.player.getX(), dz = point.z - game.player.getZ();
       if (dx * dx + dz * dz > 256 * 256) return;
+      shown++;
       const active = index === target;
       const color = active ? 0xFFFFCF67 : accent;
       const fill = ((color & 0xFFFFFF) | ((active ? 72 : 38) << 24)) | 0;

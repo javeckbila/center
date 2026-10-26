@@ -10,6 +10,7 @@ var RENDER = require("center/features/auto-farm/render");
 var MOCKF = require("center/tests/mock-farm-world");
 var FARM_WORLD = require("center/features/auto-farm/world");
 var PROFILES = require("center/features/auto-farm/profiles");
+var GENERATOR = require("center/features/auto-farm/generator");
 
 function harness(points) {
   var w = MOCKF.createFarmWorld({});
@@ -322,7 +323,7 @@ test("jump is requested before colliding with a one-block obstacle", function ()
 
 test("a tall wall or low ceiling pauses input and only stops if it persists", function () {
   ["wall", "ceiling"].forEach(kind => {
-    var h = harness([{ x: 0.5, y: 64, z: 6.5 }, { x: 0.5, y: 64, z: 0.5 }]); h.w.player.z = 1.3;
+    var h = harness([{ x: 0.5, y: 64, z: 6.5 }, { x: 0.5, y: 64, z: -6.5 }]); h.w.player.z = 1.3;
     h.w.blocks.set("0,64,2", h.w.stone);
     h.w.blocks.set(kind === "wall" ? "0,65,2" : "0,66,1", h.w.stone);
     ok(h.begin()); h.cycle();
@@ -402,7 +403,7 @@ test("a position correction crossing the goal does not count as walking through 
 
 test("temporary collision, water, item use, riding and pause release input then resume", function () {
   ["wall", "water", "item", "riding", "pause"].forEach(kind => {
-    var h = harness([{ x: 0.5, y: 64, z: 6.5 }, { x: 0.5, y: 64, z: 0.5 }]);
+    var h = harness([{ x: 0.5, y: 64, z: 6.5 }, { x: 0.5, y: 64, z: -6.5 }]);
     h.w.player.z = 1.3; ok(h.begin()); h.cycle();
     if (kind === "wall") { h.w.blocks.set("0,64,2", h.w.stone); h.w.blocks.set("0,65,2", h.w.stone); }
     if (kind === "water") h.w.water = true;
@@ -498,6 +499,146 @@ test("markers are numbered, filled, through walls and close their collection on 
   h.w.throwGizmo = true;
   try { RENDER.renderRoute(h.w.T, h.w.game, h.saved, -1, 0xFF4C8DFF); } catch (error) {}
   eq(h.w.collections, 0, "collector closed after exception");
+});
+
+function plant(w, x, cy, z, crop) {
+  w.blocks.set(x + "," + (cy - 1) + "," + z, w.farmland);
+  w.crops.set(x + "," + cy + "," + z, crop || w.wheat);
+}
+function generate(w) {
+  var reader = FARM_WORLD.createWorld(w.T).survey(w.game);
+  var job = GENERATOR.createGenerator(reader, "farm"), state;
+  for (var i = 0; i < 100000; i++) {
+    state = job.step(32);
+    if (state.result || state.error) return state;
+  }
+  throw new Error("generation did not finish");
+}
+function checkLoop(w, result, expected) {
+  ok(result.result, result.error);
+  var saved = result.result, reader = FARM_WORLD.createWorld(w.T).survey(w.game), seen = new Set();
+  saved.points.forEach((a, i) => {
+    var b = saved.points[(i + 1) % saved.points.length];
+    var dx = b.x - a.x, dz = b.z - a.z, distance = Math.abs(dx) + Math.abs(dz);
+    ok(dx === 0 || dz === 0, "no diagonal corner cutting");
+    ok(distance >= 1, "nonzero long legs including closure");
+    var last = reader.tile(Math.floor(a.x), Math.floor(a.y + 0.1), Math.floor(a.z));
+    ok(last, "starts on crop"); seen.add(last.x + "," + last.cy + "," + last.z);
+    for (var n = 1; n <= distance; n++) {
+      var next = null;
+      for (var dy = -1; dy <= 1 && !next; dy++) {
+        var candidate = reader.tile(Math.floor(a.x + dx / distance * n), last.cy + dy, Math.floor(a.z + dz / distance * n));
+        if (candidate && reader.edge(last, candidate)) next = candidate;
+      }
+      ok(next, "every point between waypoints has the detected crop");
+      ok(reader.edge(last, next), "full collision clearance, including the closing leg");
+      seen.add(next.x + "," + next.cy + "," + next.z); last = next;
+      for (var sx = -2; sx <= 2; sx++) for (var sz = -2; sz <= 2; sz++) {
+        var room = false;
+        for (var sy = -2; sy <= 2; sy++) if (reader.tile(next.x + sx, next.cy + sy, next.z + sz)) room = true;
+        ok(room, "two crop rows of sweep clearance throughout every leg");
+      }
+    }
+  });
+  if (expected !== undefined) eq(result.count, expected, "scans the connected crop bed");
+}
+
+test("generator routes inside an irregular terraced bed and closes through crops around walls", function () {
+  var w = MOCKF.createFarmWorld({});
+  for (var x = 0; x < 20; x++) for (var z = 0; z < 30; z++) {
+    if (x === 9 && z === 6) continue; // pillar with enough room to detour inside
+    plant(w, x, z < 15 ? 64 : 65, z);
+  }
+  for (var y = 63; y <= 67; y++) w.blocks.set("9," + y + ",6", w.stone);
+  plant(w, -1, 64, 0, w.carrots); // different crop must never enter the graph
+  w.player.y = 63.9375;
+  var result = generate(w);
+  checkLoop(w, result, 599);
+  eq(result.result.crop, "minecraft:wheat");
+  ok(result.result.points.some(p => p.y === 64.9375), "upper terrace included");
+});
+
+test("generator rejects blocked headroom, deep drops and disconnected crops", function () {
+  var w = MOCKF.createFarmWorld({}); w.player.y = 63.9375;
+  for (var x = 0; x < 7; x++) for (var z = 0; z < 7; z++) plant(w, x, 64, z);
+  plant(w, 0, 66, 7); // two-block jump
+  plant(w, 10, 64, 0); // no crop connector
+  var result = generate(w); checkLoop(w, result, 49);
+  for (var x = 0; x < 7; x++) for (var z = 0; z < 7; z++) if (x || z) w.blocks.set(x + ",65," + z, w.stone);
+  result = generate(w); ok(result.error && !result.result, "cannot walk through a low ceiling");
+  w.crops.clear(); result = generate(w); ok(result.error && !result.result, "not standing on a crop");
+});
+
+test("large generation is incremental, bounded, and preserves generated routes in saved configs", function () {
+  var w = MOCKF.createFarmWorld({}); w.player.y = 63.9375;
+  for (var x = 0; x < 40; x++) for (var z = 0; z < 50; z++) plant(w, x, 64, z);
+  var job = GENERATOR.createGenerator(FARM_WORLD.createWorld(w.T).survey(w.game), "farm");
+  var first = job.step(16); eq(first.phase, "scan"); ok(first.count < 80, "bounded first tick");
+  var state;
+  for (var i = 0; i < 10000; i++) { state = job.step(64); if (state.result || state.error) break; }
+  checkLoop(w, state, 2000);
+  ok(state.result.points.length >= 10 && state.result.points.length <= 15, "large open plot uses about twelve waypoints: " + state.result.points.length);
+  ok(state.result.points.some((p, i) => GEO.length(p.x - state.result.points[(i + 1) % state.result.points.length].x,
+    p.z - state.result.points[(i + 1) % state.result.points.length].z) > 30), "keeps full-length farming passes");
+  var disk, route = ROUTE.createRoute(null, value => { disk = value; });
+  eq(route.replace(state.result), null); eq(disk.crop, "minecraft:wheat");
+  route = ROUTE.createRoute(disk, () => {}); eq(route.snapshot().crop, disk.crop);
+  ok(route.remove(), "manual edits cannot create unchecked shortcuts");
+  var profiles = PROFILES.createProfiles(null, () => {});
+  eq(profiles.save("large", route.snapshot(), {}), null); eq(profiles.load("large").route.crop, disk.crop);
+  w.loadedChunks = false; ok(generate(w).error, "unloaded plots are not silently truncated");
+});
+
+test("start chooses the closest waypoint with height included and retains cyclic order", function () {
+  var h = harness([{ x: 0.5, y: 70, z: 0.5 }, { x: 0.5, y: 64, z: 6.5 }, { x: 4.5, y: 64, z: 6.5 }]);
+  h.w.player.z = 6; ok(h.begin()); eq(h.farmer.state().target, 1);
+  h.cycle(); eq(h.farmer.state().target, 2); eq(h.farmer.state().laps, 0, "joining near the end is not a lap");
+});
+
+test("generated routes repeatedly farm interior lanes and one-block terraces without cutting corners", function () {
+  var h = harness([]); h.w.blocks.clear(); h.w.player.y = 63.9375;
+  for (var x = 0; x < 8; x++) for (var z = 0; z < 12; z++) plant(h.w, x, z < 6 ? 64 : 65, z);
+  h.w.player.x = 2.5; h.w.player.z = 2.5;
+  var result = generate(h.w); checkLoop(h.w, result, 96);
+  Object.assign(h.saved, result.result);
+  h.begin();
+  var jumped = false;
+  for (var i = 0; i < 3000 && h.farmer.state().phase !== "off" && h.farmer.state().laps < 2; i++) {
+    h.cycle(true); jumped = jumped || h.w.game.options.keyJump.down;
+    var p = h.w.player;
+    ok(p.x >= 2.15 && p.x <= 5.85 && p.z >= 2.15 && p.z <= 9.85, "player retains sweep margin at " + p.x + "," + p.z);
+  }
+  ok(h.farmer.state().running, h.halts.join(", "));
+  ok(jumped, "anticipates terrace jumps");
+  ok(h.farmer.state().laps >= 2, "closes the loop repeatedly: " + h.farmer.state().status);
+  h.farmer.stop(); released(h);
+});
+
+test("crop-only startup detours to the closest waypoint rather than walking through a divider", function () {
+  var h = harness([]); h.w.blocks.clear(); h.w.player.y = 63.9375;
+  for (var z = 0; z < 7; z++) { plant(h.w, 0, 64, z); plant(h.w, 2, 64, z); }
+  plant(h.w, 1, 64, 6);
+  for (var z = 0; z < 6; z++) for (var y = 63; y <= 66; y++) h.w.blocks.set("1," + y + "," + z, h.w.stone);
+  h.saved.crop = "minecraft:wheat";
+  h.saved.points = [{ x: 2.5, y: 63.9375, z: 0.5 }, { x: 2.5, y: 63.9375, z: 6.5 }];
+  h.begin();
+  for (var i = 0; i < 150 && !h.farmer.state().running; i++) h.cycle();
+  ok(h.farmer.state().running, h.halts.join(", ")); eq(h.farmer.state().target, 0);
+  h.run(15, true);
+  ok(h.w.player.z > 1.5 && h.w.player.x < 1, "approach follows crops toward the far-end crossing");
+});
+
+test("generated farming attacks crops and releases attack on walls even between ticks", function () {
+  var h = harness([]); h.w.blocks.clear(); h.w.player.y = 63.9375;
+  for (var x = 0; x < 7; x++) for (var z = 0; z < 12; z++) plant(h.w, x, 64, z);
+  Object.assign(h.saved, generate(h.w).result); h.begin(); h.cycle();
+  h.w.game.hitResult = {
+    getType: () => h.w.T.HitType.BLOCK, getBlockPos: () => new h.w.T.BlockPos(0, 64, 1), getDirection: () => "UP",
+  };
+  h.cycle(); ok(h.w.game.options.keyAttack.down); eq(h.nativeHits.length, 1);
+  h.w.crops.delete("0,64,1"); h.w.blocks.set("0,64,1", h.w.stone);
+  h.w.advance(); h.farmer.frame(); eq(h.w.game.options.keyAttack.down, false, "wall is never attacked");
+  h.farmer.stop(); released(h);
 });
 
 print(passed + " tests passed");

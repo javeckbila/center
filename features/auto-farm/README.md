@@ -1,13 +1,55 @@
 # Auto Farm
 
-Add at least two waypoints while standing on your farm, put a hoe in your
-hotbar, then start Auto Farm. It visits points in order and closes the loop
-from the last point back to the first. Keep each segment directly walkable;
-the controller anticipates one-block obstacles with jump clearance, but does
-not find detours around walls.
+Stand on the crop bed and run `/af generate` (or **Generate crop route** in
+the Auto Farm settings). It detects the crop under your feet and scans its
+connected, loaded bed, including adjacent terraces one block up or down.
+Put a usable hoe in your hotbar, then `/af start`. Starting selects the closest
+waypoint in three dimensions and continues the saved order from there.
+
+Generated loops use up to six long interior passes, typically **10–15 waypoints
+on a large open bed**. Connections use cardinal neighbors with full player-box
+clearance, solid support and jump headroom;
+water, bare aisles, different crops, tall walls, low ceilings and deeper drops
+cannot become connectors. The closing leg returns through the same checked
+crop graph, including detours around obstacles. Straight runs keep only their
+endpoints, including runs crossing one-block terraces; the controller handles
+those jumps along the run. Essential obstacle bends are retained even when
+that needs more than 15 points. Irregular beds can require retracing crop tiles.
+
+Every tile along the saved loop has a **two-row crop buffer in all horizontal
+directions**, including turns and the return leg. Border rows, narrow aisles
+and crop tiles immediately beside walls are excluded. The planner uses the
+connected interior region closest to where you generated. Beds narrower than
+five crop tiles, or regions joined only by a narrow neck, may lack room for
+the sweep. Lane spacing favors long runs and a small waypoint list; six passes
+do not guarantee harvesting every planted tile of a very wide farm per lap.
+
+Scanning and route construction run in small main-thread tick slices (up to
+64 work items or about 6 ms per slice). Up to 32,768 reachable crop tiles and
+65,536 generated waypoints are supported. A scan touching unloaded chunks or
+exceeding the limit fails instead of saving an incomplete loop. Failed or
+canceled generation keeps your previous route. `/af status` shows progress;
+`/af stop` cancels. Generating does not move the player or start farming.
+
+Generated-route startup finds a crop-only approach to the closest waypoint,
+so an intervening wall cannot become a straight shortcut. Start on the same
+connected crop bed. Corners use tighter arrival checks and momentum braking
+to keep the player inside narrow rows. The actual direction is checked again
+between movement ticks, and generated routes only attack the detected crop.
+Generation checks the world as scanned; later obstacles still pause farming.
+Crop coverage describes planted tiles when scanning, not guaranteed regrowth:
+harvested crops must regrow or be replanted by the server/player for continuous
+yield. The module does not automate planting.
+
+Manual routes remain available with `/af add` (up to 256 points). Keep every
+manual segment, including the closing leg, directly walkable; automatic wall
+detours and crop-only validation apply to generated routes. Generated loops
+cannot be edited point by point because removing a corner could create an
+unchecked shortcut. Regenerate, or clear the route to record a manual one.
 
 | Command | Action |
 | --- | --- |
+| `/af generate` | Generate a checked loop for the crop bed under your feet. |
 | `/af add` | Append your current position. |
 | `/af remove` | Remove the last waypoint. |
 | `/af remove 2` | Remove waypoint 2 and renumber the remaining points. |
@@ -32,7 +74,8 @@ settings are converted automatically to these units.
 
 The sweep stays centered on each route segment. Movement compensates for the
 camera angle, slows out of sprint near endpoints, and recognizes waypoints
-crossed between ticks so it can continue into the next segment.
+crossed between ticks so it can continue into the next segment. Laps count
+when returning to the starting waypoint, including when starting mid-route.
 
 Approaching a lower crop layer automatically increases the downward pitch to
 aim above its soil within interaction reach. It eases back to **Look pitch**
@@ -74,7 +117,7 @@ farmer's aim or steering. Stopping restores both previous options. This is
 shared with Auto Miner and requires a full Minecraft restart after installing
 the camera/mouse mixins; `/ct load` alone cannot install them.
 
-The controller holds vanilla attack and automatically selects a usable
+The controller uses vanilla attack and automatically selects a usable
 hotbar hoe, switching to a spare before its final durability point. It restores
 the previous hotbar slot when stopped. Crops are harvested using ordinary
 block attacks; planting is not automated.

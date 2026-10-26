@@ -10,12 +10,14 @@ const theme = require("../../gui/theme");
 const { createRoute } = require("./route");
 const { createProfiles } = require("./profiles");
 const { createFarmer } = require("./farmer");
+const { createWorld } = require("./world");
+const { createGenerator } = require("./generator");
 const automationView = require("../../core/automation-view");
 const { renderRoute } = require("./render");
 
 const ID = "auto-farm";
 const PREFIX = "&8[&bAuto Farm&8]&r ";
-const SUBCOMMANDS = ["add", "remove", "clear", "start", "stop", "toggle", "status", "list", "save", "load", "configs", "delete", "help"];
+const SUBCOMMANDS = ["generate", "add", "remove", "clear", "start", "stop", "toggle", "status", "list", "save", "load", "configs", "delete", "help"];
 const Clock = Java.type("java.lang.System");
 const say = text => ChatLib.chat(PREFIX + text);
 // Older versions stored the time for a full cycle; the menu now describes a
@@ -39,11 +41,15 @@ const profiles = createProfiles(store.entry(ID).profiles, saved => {
   store.flush();
 });
 let renderErrorAt = -Infinity;
+let generation = null, generationStatus = "";
 
 function minecraftTypes() {
   const type = name => Java.type(name);
   return {
     AABB: type("net.minecraft.world.phys.AABB"),
+    BlockPos: type("net.minecraft.core.BlockPos"),
+    CropBlock: type("net.minecraft.world.level.block.CropBlock"),
+    BuiltInRegistries: type("net.minecraft.core.registries.BuiltInRegistries"),
     Vec3: type("net.minecraft.world.phys.Vec3"),
     ClipContext: type("net.minecraft.world.level.ClipContext"),
     ClipBlock: type("net.minecraft.world.level.ClipContext$Block"),
@@ -92,6 +98,7 @@ function guard(f, where, fn) {
 }
 
 function stopForEdit(f) {
+  generation = null;
   if (f.isEnabled()) f.setEnabled(false, "command");
 }
 
@@ -101,6 +108,17 @@ function command(f, sub, value, extra) {
   if (extra !== undefined || (value !== undefined && ["remove", "save", "load", "delete"].indexOf(action) < 0)) return say("&eUse /af help for commands.");
   const saved = route.snapshot();
   switch (action) {
+    case "generate": {
+      const world = context();
+      if (!world) return say("&eJoin a world and stand on the crop bed first.");
+      stopForEdit(f);
+      const game = Client.getMinecraft();
+      if (!game.player.onGround()) return say("&eLand on the crop bed before generating.");
+      const reader = createWorld(types).survey(game);
+      generation = { job: createGenerator(reader, world), context: world, player: game.player, level: game.level };
+      generationStatus = "Scanning connected crop bed";
+      return say("&7Scanning the connected crop bed. Your previous route stays saved until the new loop is ready. /af stop cancels.");
+    }
     case "save": {
       const values = {};
       f.settings.forEach(s => { if (s.type !== "button") values[s.key] = f.get(s.key); });
@@ -153,6 +171,7 @@ function command(f, sub, value, extra) {
       route.clear();
       return say("&7Waypoints cleared.");
     case "start":
+      if (generation) return say("&eWait for route generation to finish, or /af stop to cancel it.");
       if (f.isEnabled()) return say("&eAlready enabled.");
       f.setEnabled(true, "command");
       return;
@@ -165,14 +184,16 @@ function command(f, sub, value, extra) {
       f.setEnabled(true, "command");
       return;
     case "status":
-      return say("&f" + farmer.state().status + " &7| " + saved.points.length + " waypoints" +
+      return say("&f" + (generation ? generationStatus : farmer.state().status) + " &7| " + saved.points.length + " waypoints" +
         (saved.points.length && saved.context !== context() ? " (another world or dimension)" : ""));
     case "list":
       if (!saved.points.length) return say("&7No waypoints. Stand at a position and use /af add.");
       say("&7Route order: 1 to " + saved.points.length + ", then back to 1.");
-      saved.points.forEach((p, i) => say("&f" + (i + 1) + " &7: " + p.x.toFixed(2) + ", " + p.y.toFixed(2) + ", " + p.z.toFixed(2)));
+      saved.points.slice(0, 100).forEach((p, i) => say("&f" + (i + 1) + " &7: " + p.x.toFixed(2) + ", " + p.y.toFixed(2) + ", " + p.z.toFixed(2)));
+      if (saved.points.length > 100) say("&7Showing the first 100 points. All " + saved.points.length + " are saved.");
       return;
     default:
+      say("&f/af generate &7- scan the crop under you and build a safe loop");
       say("&f/af add &7- add your current position");
       say("&f/af remove [number] &7- remove that waypoint, or the last one");
       say("&f/af clear &7- delete the route");
@@ -187,6 +208,7 @@ function command(f, sub, value, extra) {
 function measure(f, preview) {
   if (!farmer || (!preview && (!f.get("showHud") || !World.isLoaded()))) return null;
   const state = farmer.state();
+  if (generation) state.status = generationStatus;
   return { w: Math.max(110, draw.width(state.status) + 10), h: 28, state };
 }
 
@@ -194,9 +216,11 @@ module.exports = registry.defineFeature({
   id: ID,
   name: "Auto Farm",
   category: "Automation",
-  description: "Loops through /af waypoints with a hotbar hoe, sweeps across crops, and anticipates one-block jumps.",
+  description: "Generates crop-only loops across terraced farms and joins the closest waypoint with a hotbar hoe.",
   persistEnabled: false,
   settings: [
+    { type: "button", name: "Generate crop route", text: "Generate", action(f) { command(f, "generate"); },
+      description: "Stand on the crop bed. Scans connected crops and checks walls, headroom and one-block level changes." },
     { type: "slider", key: "pitch", name: "Look pitch", min: 0, max: 90, step: 1, default: 20, unit: "deg",
       description: "Normal downward camera angle. Automatically looks farther down toward lower crop layers. 90 looks straight down." },
     { type: "slider", key: "sweepWidth", name: "Sweep width", min: 10, max: 80, step: 1, default: 45, unit: "deg",
@@ -239,6 +263,26 @@ module.exports = registry.defineFeature({
       onStart: () => say("&aOn. Following the waypoint loop. /af stop or your toggle key stops farming."),
       onHalt: reason => halted(f, reason),
     });
+    register("tick", () => {
+      if (!generation) return;
+      try {
+        const game = Client.getMinecraft();
+        if (!World.isLoaded() || game.player !== generation.player || game.level !== generation.level || context() !== generation.context) {
+          generation = null; say("&eGeneration canceled: world changed. Previous route kept."); return;
+        }
+        const state = generation.job.step(64, 6);
+        generationStatus = (state.phase === "scan" ? "Scanning crops: " : "Building crop loop: ") + state.count + " tiles";
+        if (state.error) { generation = null; say("&e" + state.error); }
+        else if (state.result) {
+          const error = route.replace(state.result);
+          generation = null;
+          say(error ? "&e" + error : "&aGenerated " + state.result.points.length + " waypoints from " + state.count + " scanned " +
+            state.result.crop.replace("minecraft:", "") + " tiles, with room for sweeping. /af start joins the closest waypoint.");
+        }
+      } catch (error) {
+        generation = null; log.error("Auto Farm generation", error); say("&cGeneration failed. Previous route kept; see /ct console.");
+      }
+    });
     f.on("tick", guard(f, "tick", () => farmer.tick()));
     f.on("step", guard(f, "camera", () => farmer.frame())).setFps(120);
     f.on("guiOpened", guard(f, "screen", screen => {
@@ -270,6 +314,7 @@ module.exports = registry.defineFeature({
     const miner = registry.get("auto-miner");
     if (miner && miner.isEnabled()) miner.setEnabled(false, "automation-conflict");
     haltScreen = null;
+    generation = null;
     farmer.start();
   },
   onDisable() { if (farmer) farmer.stop("Off"); },

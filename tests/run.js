@@ -865,4 +865,26 @@ test("Auto Farm menu exposes a working pitch slider and the sweep controls", fun
   Client.currentGui.close();
 });
 
+test("crop generation commands keep the old route on failure, cancellation and world change, then persist a completed loop", function () {
+  var before = JSON.stringify(ST.entry("auto-farm").route);
+  currentScreen = null; mc.player.x = 0.5; mc.player.y = 64; mc.player.z = 0.5;
+  MOCKW.grounded = true; MOCKW.crops.clear();
+  fireCommand("auto-farm", "generate"); ticks(2);
+  eq(JSON.stringify(ST.entry("auto-farm").route), before, "failed generation preserves route");
+  for (var x = 0; x < 5; x++) for (var z = 0; z < 8; z++) MOCKW.crops.set(x + ",64," + z, MOCKW.wheat);
+  fireCommand("auto-farm", "generate"); fireCommand("auto-farm", "stop"); ticks(20);
+  eq(JSON.stringify(ST.entry("auto-farm").route), before, "cancel does not replace route");
+  fireCommand("auto-farm", "generate"); MOCKW.dimension = "minecraft:the_nether"; ticks(2);
+  MOCKW.dimension = "minecraft:overworld";
+  eq(JSON.stringify(ST.entry("auto-farm").route), before, "dimension change preserves route");
+  fireCommand("auto-farm", "generate"); ticks(200);
+  var generatedRoute = ST.entry("auto-farm").route;
+  eq(generatedRoute.crop, "minecraft:wheat"); ok(generatedRoute.points.length >= 2);
+  ok(!farmFeature.isEnabled(), "generation does not start the macro");
+  eq(JSON.parse(files["center/config.json"]).features["auto-farm"].route.crop, "minecraft:wheat", "saved to disk");
+  fireCommand("auto-farm", "save", "generated"); fireCommand("auto-farm", "clear");
+  fireCommand("auto-farm", "load", "generated");
+  eq(ST.entry("auto-farm").route.crop, "minecraft:wheat", "profile restores generated-route validation");
+});
+
 print(passed + " tests passed");

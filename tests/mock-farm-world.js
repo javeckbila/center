@@ -18,6 +18,34 @@ function createFarmWorld(options) {
   w.typeByName["net.minecraft.world.level.ClipContext"] = w.T.ClipContext;
   // Crops participate in outline picks but never in walking/floor collision.
   w.crops = new Map();
+  w.T.CropBlock = class { constructor(name) { this.name = name; } };
+  w.wheat = new w.T.CropBlock("minecraft:wheat");
+  w.carrots = new w.T.CropBlock("minecraft:carrots");
+  w.farmland = { name: "minecraft:farmland", height: 0.9375 };
+  w.T.BuiltInRegistries = { BLOCK: { getKey(block) { return block.name; } } };
+  const oldState = game.level.getBlockState;
+  game.level.getBlockState = function (pos) {
+    const state = oldState(pos), id = pos.getX() + "," + pos.getY() + "," + pos.getZ();
+    const crop = w.crops.get(id);
+    const block = w.blocks.get(id) || (crop === true ? w.wheat : crop) || { name: "minecraft:air" };
+    state.getBlock = () => block;
+    state.getCollisionShape = () => ({
+      isEmpty: () => !w.blocks.has(id),
+      bounds: () => ({ minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: block.height || 1, maxZ: 1 }),
+    });
+    return state;
+  };
+  game.level.noCollision = function (entity, box) {
+    for (let x = Math.floor(box.minX + 0.00001); x < Math.ceil(box.maxX - 0.00001); x++) {
+      for (let y = Math.floor(box.minY + 0.00001); y < Math.ceil(box.maxY - 0.00001); y++) {
+        for (let z = Math.floor(box.minZ + 0.00001); z < Math.ceil(box.maxZ - 0.00001); z++) {
+          const block = w.blocks.get(x + "," + y + "," + z);
+          if (block && y + (block.height || 1) > box.minY + 0.00001) return false;
+        }
+      }
+    }
+    return true;
+  };
   const floorClip = game.level.clip;
   game.level.clip = function (context) {
     const floor = floorClip(context);
@@ -82,6 +110,7 @@ function createFarmWorld(options) {
   w.T.GizmoStyle = { strokeAndFill(stroke, width, fill) { return { stroke, width, fill }; } };
   w.T.TextStyle = { forColorAndCentered(color) { return { withScale(scale) { return { color, scale }; } }; } };
   const extra = {
+    CropBlock: "net.minecraft.world.level.block.CropBlock", BuiltInRegistries: "net.minecraft.core.registries.BuiltInRegistries",
     AABB: "net.minecraft.world.phys.AABB", LevelResource: "net.minecraft.world.level.storage.LevelResource",
     Gizmos: "net.minecraft.gizmos.Gizmos", GizmoStyle: "net.minecraft.gizmos.GizmoStyle", TextStyle: "net.minecraft.gizmos.TextGizmo$Style",
   };

@@ -2,6 +2,7 @@
 // game, route, settings, clock and lifecycle notifications are injected.
 const G = require("./geometry");
 const { createWorld } = require("./world");
+const { createJoin } = require("./generator");
 
 const INPUTS = ["keyUp", "keyDown", "keyLeft", "keyRight", "keyJump", "keySprint", "keyAttack"];
 const ARRIVAL = 0.6;
@@ -23,6 +24,8 @@ function createFarmer(deps) {
   let terrainPitch = 0, lowerAimUntil = 0;
   let suspended = false, waitReason = null, waitSince = 0;
   let lastTick = 0, runTime = 0;
+  let joining = null, joinOrigin = null, approach = [], lapAnchor = 0, lapDeparted = false;
+  const goalPoint = () => approach.length ? approach[0] : route.points[target];
 
   function writeBinding(binding, down) {
     if (binding.isDown() === down) return;
@@ -69,6 +72,7 @@ function createFarmer(deps) {
     phase = "off";
     status = reason || "Off";
     route = null;
+    joining = null; approach = [];
     jumpHeld = false;
     release();
     return true;
@@ -81,6 +85,7 @@ function createFarmer(deps) {
   function start() {
     if (phase !== "off") return false;
     phase = "arming";
+    joining = null; approach = [];
     suspended = false;
     waitReason = null;
     runTime = 0;
@@ -91,12 +96,30 @@ function createFarmer(deps) {
 
   function activate(game, now) {
     const saved = deps.route();
-    if (saved.points.length < 2) return halt("Add at least two waypoints with /af add.");
+    if (saved.points.length < 2) return halt("Generate a crop route with /af generate, or add at least two waypoints with /af add.");
     if (saved.context !== deps.context()) return halt("This route belongs to another world or dimension.");
     if (!game.player.onGround()) { status = "Waiting to land before starting"; return; }
     if (INPUTS.filter(name => name !== "keySprint").concat(["keyUse", "keyShift"]).some(name => game.options[name].isDown())) {
       status = "Release movement, attack and use keys to start";
       return;
+    }
+    const position = { x: game.player.getX(), y: game.player.getY(), z: game.player.getZ() };
+    // Include height: stacked/terraced plots must not pick a point on a
+    // different level just because it shares the same horizontal position.
+    let nearest = 0, distance = Infinity;
+    saved.points.forEach((p, i) => {
+      const d = (p.x - position.x) ** 2 + (p.y - position.y) ** 2 + (p.z - position.z) ** 2;
+      if (d < distance) { nearest = i; distance = d; }
+    });
+    if (saved.crop) {
+      if (!joining || G.length(position.x - joinOrigin.x, position.z - joinOrigin.z) > 0.2 || Math.abs(position.y - joinOrigin.y) > 0.2) {
+        joining = createJoin(W.survey(game, saved.crop), saved.points[nearest]); joinOrigin = position;
+      }
+      const joined = joining.step(64, 6);
+      if (!joined.done) { status = "Finding crop-only approach to waypoint " + (nearest + 1); return; }
+      if (!joined.path) return halt("Closest waypoint has no loaded, crop-only approach. Stand on the crop bed or regenerate.");
+      approach = joined.path.slice(0, -1);
+      joining = null;
     }
     activeGame = game;
     activePlayer = game.player;
@@ -106,7 +129,9 @@ function createFarmer(deps) {
     if (!W.selectHoe(game.player)) return halt("Put a hoe with at least 2 durability remaining in your hotbar.");
     hoeSlot = inventory.getSelectedSlot();
     route = saved;
-    target = laps = 0;
+    target = lapAnchor = nearest;
+    laps = 0;
+    lapDeparted = false;
     sweep = sweepWidth = 0;
     heading = game.player.getYRot();
     terrainPitch = deps.setting("pitch");
@@ -121,7 +146,7 @@ function createFarmer(deps) {
     previous = { x: game.player.getX(), y: game.player.getY(), z: game.player.getZ() };
     deps.view.start();
     phase = "running";
-    status = "Waypoint 1 / " + route.points.length;
+    status = "Waypoint " + (target + 1) + " / " + route.points.length;
     if (deps.onStart) deps.onStart();
   }
 
@@ -184,14 +209,28 @@ function createFarmer(deps) {
 
   function setLegHeading(from) {
     legStart = from;
-    const goal = route.points[target];
+    const goal = goalPoint();
     const dx = goal.x - from.x, dz = goal.z - from.z;
     if (G.length(dx, dz) > 0.001) legHeading = G.bearing(dx, dz);
   }
 
   function move(game, jumping) {
-    const p = game.player, goal = route.points[target];
-    const names = G.steering(goal.x - p.getX(), goal.z - p.getZ(), p.getYRot());
+    const p = game.player, goal = goalPoint();
+    const remaining = G.length(goal.x - p.getX(), goal.z - p.getZ());
+    let names = G.steering(goal.x - p.getX(), goal.z - p.getZ(), p.getYRot());
+    if (route.crop && remaining < 0.75 && p.onGround()) {
+      const motion = p.getDeltaMovement();
+      const toward = remaining > 0.001 ? (motion.x * (goal.x - p.getX()) + motion.z * (goal.z - p.getZ())) / remaining : 0;
+      // Release thrust early enough for ground friction to settle at a turn.
+      // Disabling sprint alone leaves enough momentum to clip a narrow row.
+      if (toward > remaining * 0.4 + 0.005) names = [];
+    }
+    if (route.crop && p.onGround()) {
+      const probe = W.terrain(game, G.travel(names, p.getYRot()), G.length(goal.x - p.getX(), goal.z - p.getZ()) + 0.05);
+      // The sweep changes steering every frame. Recheck its actual direction
+      // before granting input, even between the 20 Hz movement ticks.
+      if (!probe.safe || probe.unloaded || (probe.blocked && !probe.jump)) names = [];
+    }
     ["keyUp", "keyDown", "keyLeft", "keyRight"].forEach(name => setInput(game, name, names.indexOf(name) >= 0));
     const nearWaypoint = G.length(goal.x - p.getX(), goal.z - p.getZ()) < BRAKE_DISTANCE;
     setInput(game, "keySprint", deps.setting("sprint") && !nearWaypoint && names.indexOf("keyUp") >= 0);
@@ -226,7 +265,7 @@ function createFarmer(deps) {
     let corrected = false;
     if (previous) {
       const dx = position.x - previous.x, dz = position.z - previous.z;
-      const goal = route.points[target];
+      const goal = goalPoint();
       const toward = G.length(goal.x - previous.x, goal.z - previous.z);
       const backwards = toward > ARRIVAL && (dx * (goal.x - previous.x) + dz * (goal.z - previous.z)) / toward < -0.35;
       corrected = G.length(dx, dz) > 6 || Math.abs(position.y - previous.y) > 4 || backwards;
@@ -244,12 +283,18 @@ function createFarmer(deps) {
 
     if (suspended && waitReason === NO_PROGRESS && !corrected && now - waitSince < 1) return;
 
-    const goal = route.points[target];
+    const goal = goalPoint();
     const distance = G.length(goal.x - p.getX(), goal.z - p.getZ());
     const arrivalDistance = lastPosition ? G.segmentDistance(goal, lastPosition, position) : distance;
-    if (arrivalDistance <= ARRIVAL && Math.abs(goal.y - p.getY()) <= 0.6) {
-      if (target === route.points.length - 1) laps++;
-      target = (target + 1) % route.points.length;
+    if (arrivalDistance <= (route.crop ? 0.08 : ARRIVAL) && Math.abs(goal.y - p.getY()) <= (route.crop ? 0.18 : 0.6)) {
+      if (approach.length) approach.shift();
+      else {
+        if (target === lapAnchor) {
+          if (lapDeparted) laps++;
+          lapDeparted = true;
+        }
+        target = (target + 1) % route.points.length;
+      }
       // Keep the camera centered on the route leg, not a bearing which can
       // reverse by 180 degrees as the player passes close to the endpoint.
       setLegHeading(goal);
@@ -267,8 +312,9 @@ function createFarmer(deps) {
     // granting ticks or frames permission to press any movement/attack keys.
     let terrain = null;
     if (p.onGround()) {
-      const names = G.steering(route.points[target].x - p.getX(), route.points[target].z - p.getZ(), p.getYRot());
-      terrain = W.terrain(game, G.travel(names, p.getYRot()));
+      const next = goalPoint();
+      const names = G.steering(next.x - p.getX(), next.z - p.getZ(), p.getYRot());
+      terrain = W.terrain(game, G.travel(names, p.getYRot()), route.crop ? G.length(next.x - p.getX(), next.z - p.getZ()) + 0.05 : undefined);
       if (terrain.unloaded) return wait("Terrain is still loading.", now, Infinity);
       if (!terrain.safe) return halt("Unsafe drop ahead.");
       if (terrain.blocked && !terrain.jump) return wait("Wall or low ceiling ahead. Adjust your waypoints.", now, STUCK_SECONDS);
@@ -288,8 +334,10 @@ function createFarmer(deps) {
     // Vanilla handles continued break progress and swings. Prime its first
     // block attack explicitly, as synthetic key clicks are unreliable in CT.
     if (game.isWindowActive() && !game.mouseHandler.isMouseGrabbed()) game.mouseHandler.grabMouse();
-    setInput(game, "keyAttack", true);
     const hit = game.hitResult;
+    const harvest = !route.crop || !!hit && hit.getType() === deps.T.HitType.BLOCK && W.isCrop(game, hit.getBlockPos(), route.crop);
+    setInput(game, "keyAttack", harvest);
+    if (!harvest) { game.gameMode.stopDestroyBlock(); return; }
     if (hit && hit.getType() === deps.T.HitType.BLOCK && !game.gameMode.isDestroying()) {
       if (game.gameMode.startDestroyBlock(hit.getBlockPos(), hit.getDirection())) p.swing(deps.T.InteractionHand.MAIN_HAND);
     }
@@ -313,6 +361,10 @@ function createFarmer(deps) {
     const pitch = Math.max(deps.setting("pitch"), terrainPitch);
     p.setXRot(p.getXRot() + G.clamp(pitch - p.getXRot(), -90 * dt, 90 * dt));
     move(game, jumpHeld);
+    if (route.crop) {
+      const hit = game.hitResult;
+      setInput(game, "keyAttack", !!hit && hit.getType() === deps.T.HitType.BLOCK && W.isCrop(game, hit.getBlockPos(), route.crop));
+    }
   }
 
   function onScreenOpened() { if (phase === "running") halt("Screen opened."); }
