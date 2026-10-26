@@ -10,6 +10,30 @@ function createFarmWorld(options) {
     return new Box(this.minX + x, this.minY + y, this.minZ + z, this.maxX - x, this.maxY - y, this.maxZ - z);
   };
   w.T.AABB = Box;
+  w.T.ClipBlock.COLLIDER = 2;
+  const OriginalClip = w.T.ClipContext;
+  w.T.ClipContext = class extends OriginalClip {
+    constructor(start, end, block, fluid, entity) { super(start, end); this.block = block; }
+  };
+  w.typeByName["net.minecraft.world.level.ClipContext"] = w.T.ClipContext;
+  // Crops participate in outline picks but never in walking/floor collision.
+  w.crops = new Map();
+  const floorClip = game.level.clip;
+  game.level.clip = function (context) {
+    const floor = floorClip(context);
+    if (context.block === w.T.ClipBlock.COLLIDER || !w.crops.size) return floor;
+    const start = context.start, end = context.end;
+    const distance = Math.sqrt(start.distanceToSqr(end));
+    const limit = floor.getType() === w.T.HitType.BLOCK ? Math.sqrt(start.distanceToSqr(floor.getLocation())) : distance;
+    for (let d = 0; d <= limit; d += 0.02) {
+      const t = d / distance;
+      const point = new w.T.Vec3(start.x + (end.x - start.x) * t, start.y + (end.y - start.y) * t, start.z + (end.z - start.z) * t);
+      const x = Math.floor(point.x), y = Math.floor(point.y), z = Math.floor(point.z);
+      if (!w.crops.has(x + "," + y + "," + z) || point.y > y + 0.875) continue;
+      return { getType: () => w.T.HitType.BLOCK, getBlockPos: () => new w.T.BlockPos(x, y, z), getLocation: () => point, getDirection: () => "UP" };
+    }
+    return floor;
+  };
   w.T.ItemTags.HOES = 2;
   const oldStack = w.stack;
   w.stack = function (pickaxe, remaining) {

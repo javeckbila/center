@@ -8,12 +8,13 @@ const { defer } = require("../../core/defer");
 const draw = require("../../gui/draw");
 const theme = require("../../gui/theme");
 const { createRoute } = require("./route");
+const { createProfiles } = require("./profiles");
 const { createFarmer } = require("./farmer");
 const { renderRoute } = require("./render");
 
 const ID = "auto-farm";
 const PREFIX = "&8[&bAuto Farm&8]&r ";
-const SUBCOMMANDS = ["add", "remove", "clear", "start", "stop", "toggle", "status", "list", "help"];
+const SUBCOMMANDS = ["add", "remove", "clear", "start", "stop", "toggle", "status", "list", "save", "load", "configs", "delete", "help"];
 const Clock = Java.type("java.lang.System");
 const say = text => ChatLib.chat(PREFIX + text);
 // Older versions stored the time for a full cycle; the menu now describes a
@@ -30,6 +31,12 @@ const route = createRoute(store.entry(ID).route, saved => {
   store.flush();
 });
 let farmer = null, types = null, unavailable = null, haltScreen = null;
+let applyingProfile = false;
+const profiles = createProfiles(store.entry(ID).profiles, saved => {
+  store.entry(ID).profiles = saved;
+  store.markDirty();
+  store.flush();
+});
 let renderErrorAt = -Infinity;
 
 function minecraftTypes() {
@@ -37,6 +44,9 @@ function minecraftTypes() {
   return {
     AABB: type("net.minecraft.world.phys.AABB"),
     Vec3: type("net.minecraft.world.phys.Vec3"),
+    ClipContext: type("net.minecraft.world.level.ClipContext"),
+    ClipBlock: type("net.minecraft.world.level.ClipContext$Block"),
+    ClipFluid: type("net.minecraft.world.level.ClipContext$Fluid"),
     ItemTags: type("net.minecraft.tags.ItemTags"),
     HitType: type("net.minecraft.world.phys.HitResult$Type"),
     InteractionHand: type("net.minecraft.world.InteractionHand"),
@@ -87,9 +97,40 @@ function stopForEdit(f) {
 function command(f, sub, value, extra) {
   const action = String(sub || "toggle").toLowerCase();
   if (!farmer && action !== "help") return say("&cUnavailable: " + unavailable + " (see /ct console).");
-  if (extra !== undefined || (value !== undefined && action !== "remove")) return say("&eUse /af help for commands.");
+  if (extra !== undefined || (value !== undefined && ["remove", "save", "load", "delete"].indexOf(action) < 0)) return say("&eUse /af help for commands.");
   const saved = route.snapshot();
   switch (action) {
+    case "save": {
+      const values = {};
+      f.settings.forEach(s => { if (s.type !== "button") values[s.key] = f.get(s.key); });
+      const error = profiles.save(value, saved, values);
+      if (error) return say("&e" + error);
+      f.set("configName", String(value).toLowerCase());
+      return say("&aSaved config '" + String(value).toLowerCase() + "' (" + saved.points.length + " waypoints and settings).");
+    }
+    case "load": {
+      const profile = profiles.load(value);
+      if (!profile) return say("&eUnknown config. Use /af configs to list saved names.");
+      stopForEdit(f);
+      applyingProfile = true;
+      try {
+        f.settings.forEach(s => {
+          if (s.type !== "button" && Object.prototype.hasOwnProperty.call(profile.values, s.key)) f.set(s.key, profile.values[s.key]);
+        });
+        f.set("configName", profile.name);
+      } finally { applyingProfile = false; }
+      route.replace(profile.route);
+      return say("&aLoaded config '" + profile.name + "'. Farming is off." +
+        (profile.route.points.length && profile.route.context !== context() ? " &eThis route belongs to another world or dimension." : ""));
+    }
+    case "configs": {
+      const names = profiles.names();
+      return say(names.length ? "&7Saved configs: &f" + names.join(", ") : "&7No saved configs. Use /af save <name>.");
+    }
+    case "delete": {
+      const error = profiles.remove(value);
+      return say(error ? "&e" + error : "&7Deleted config '" + String(value).toLowerCase() + "'. Current waypoints kept.");
+    }
     case "add": {
       const world = context();
       if (!world) return say("&eJoin a world before adding waypoints.");
@@ -135,6 +176,9 @@ function command(f, sub, value, extra) {
       say("&f/af remove [number] &7- remove that waypoint, or the last one");
       say("&f/af clear &7- delete the route");
       say("&f/af [start|stop|toggle|status|list] &7- control Auto Farm");
+      say("&f/af save <name> &7- save waypoints and farming settings");
+      say("&f/af load <name> &7- restore a saved config");
+      say("&f/af configs &7- list saved configs; &f/af delete <name> &7- delete a save");
       say("&7Configure pitch, sweep, markers and toggle key in /center.");
   }
 }
@@ -153,7 +197,7 @@ module.exports = registry.defineFeature({
   persistEnabled: false,
   settings: [
     { type: "slider", key: "pitch", name: "Look pitch", min: 0, max: 90, step: 1, default: 20, unit: "deg",
-      description: "Downward camera angle. 0 is level; 90 looks straight down." },
+      description: "Normal downward camera angle. Automatically looks farther down toward lower crop layers. 90 looks straight down." },
     { type: "slider", key: "sweepWidth", name: "Sweep width", min: 10, max: 80, step: 1, default: 45, unit: "deg",
       description: "How far the camera looks to each side of the route direction." },
     { type: "slider", key: "sweepTime", name: "Sweep time", min: 0.25, max: 3, step: 0.05, default: 0.5, unit: "s",
@@ -163,6 +207,11 @@ module.exports = registry.defineFeature({
       description: "Numbered translucent boxes through walls, visible even while farming is off. Gold marks the next waypoint." },
     { type: "toggle", key: "showHud", name: "Show HUD", default: true },
     { type: "slider", key: "scale", name: "HUD scale", min: 0.5, max: 2, step: 0.25, default: 1, unit: "x", visible: f => f.get("showHud") },
+    { type: "text", key: "configName", name: "Config name", default: "default", maxLength: 32,
+      description: "Name for saved waypoints and settings. Letters, numbers, underscores and hyphens." },
+    { type: "button", name: "Save config", text: "Save", action(f) { command(f, "save", f.get("configName")); } },
+    { type: "button", name: "Load config", text: "Load", action(f) { command(f, "load", f.get("configName")); } },
+    { type: "button", name: "Saved configs", text: "List", action(f) { command(f, "configs"); } },
     { type: "button", name: "Waypoint commands", text: "Help", action() { command(this, "help"); } },
   ],
   setup(f) {
@@ -171,6 +220,9 @@ module.exports = registry.defineFeature({
         if (args.length <= 1) return SUBCOMMANDS.filter(s => s.startsWith(String(args[0] || "").toLowerCase()));
         if (String(args[0]).toLowerCase() === "remove" && args.length === 2) {
           return route.snapshot().points.map((p, i) => String(i + 1)).filter(s => s.startsWith(String(args[1] || "")));
+        }
+        if (["save", "load", "delete"].indexOf(String(args[0]).toLowerCase()) >= 0 && args.length === 2) {
+          return profiles.names().filter(name => name.startsWith(String(args[1] || "").toLowerCase()));
         }
         return [];
       }).setName("auto-farm").setAliases("af", "autofarm");
@@ -219,6 +271,7 @@ module.exports = registry.defineFeature({
     farmer.start();
   },
   onDisable() { if (farmer) farmer.stop("Off"); },
+  onChange() { if (!applyingProfile) store.flush(); },
   hud: {
     size: measure, scaleKey: "scale", default: { ax: 0, ay: 0.5, dx: 6, dy: 65 },
     render(f, size) {

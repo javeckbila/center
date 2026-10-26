@@ -755,6 +755,24 @@ test("saved chams render while disabled, honor visibility and hide in another di
   MOCKW.dimension = "minecraft:overworld";
 });
 
+test("Auto Farm saves settings immediately and named configs restore routes without starting farming", function () {
+  farmFeature.set("pitch", 37);
+  eq(JSON.parse(files["center/config.json"]).features["auto-farm"].values.pitch, 37, "setting saved immediately");
+  fireCommand("auto-farm", "save", "wheat");
+  var disk = JSON.parse(files["center/config.json"]).features["auto-farm"];
+  eq(disk.profiles.length, 1); eq(disk.profiles[0].name, "wheat");
+  eq(disk.profiles[0].route.points.length, 2); eq(disk.profiles[0].values.pitch, 37);
+  fireCommand("auto-farm", "clear"); farmFeature.set("pitch", 10);
+  farmFeature.setEnabled(true);
+  fireCommand("auto-farm", "load", "wheat");
+  ok(!farmFeature.isEnabled(), "loading disables automation");
+  eq(farmFeature.get("pitch"), 37); eq(ST.entry("auto-farm").route.points.length, 2);
+  fireCommand("auto-farm", "configs"); ok(chatHas("Saved configs: &fwheat"));
+  fireCommand("auto-farm", "delete", "wheat"); eq(ST.entry("auto-farm").profiles.length, 0);
+  eq(ST.entry("auto-farm").route.points.length, 2, "deleting a save preserves the working route");
+  farmFeature.set("pitch", 20);
+});
+
 test("auto farm waits for chat, stops on screens, and never fights Auto Miner", function () {
   MOCKW.floor(); mc.player.z = 0.5;
   var chatScreen = { _cb: {} };

@@ -18,6 +18,7 @@ function createFarmer(deps) {
   let lastFrame = 0, sweep = 0, sweepWidth = 0, lastJump = -Infinity;
   let bestDistance = Infinity, lastProgress = 0, airborneSince = null, previous = null;
   let jumpHeld = false, heading = 0, legHeading = 0;
+  let terrainPitch = 0, lowerAimUntil = 0;
 
   function writeBinding(binding, down) {
     if (binding.isDown() === down) return;
@@ -91,6 +92,8 @@ function createFarmer(deps) {
     target = laps = 0;
     sweep = sweepWidth = 0;
     heading = game.player.getYRot();
+    terrainPitch = deps.setting("pitch");
+    lowerAimUntil = 0;
     legHeading = heading;
     setLegHeading({ x: game.player.getX(), z: game.player.getZ() });
     bestDistance = Infinity;
@@ -182,6 +185,13 @@ function createFarmer(deps) {
       jumpHeld = terrain.jump && now - lastJump > 0.45;
       if (jumpHeld) { lastJump = now; setInput(game, "keyJump", true); }
     }
+    const normalPitch = deps.setting("pitch");
+    const lowerPitch = W.lowerLayerPitch(game, p.getYRot(), normalPitch);
+    if (lowerPitch > normalPitch) {
+      terrainPitch = lowerPitch;
+      // Hold across brief gaps in the sweep so pitch does not flicker at the lip.
+      lowerAimUntil = now + 0.2;
+    } else if (now >= lowerAimUntil) terrainPitch = normalPitch;
     // Vanilla handles continued break progress and swings. Prime its first
     // block attack explicitly, as synthetic key clicks are unreliable in CT.
     if (game.isWindowActive() && !game.mouseHandler.isMouseGrabbed()) game.mouseHandler.grabMouse();
@@ -207,7 +217,8 @@ function createFarmer(deps) {
     // distorts fast sweeps, so its left/right timing must remain analytic.
     sweepWidth += (deps.setting("sweepWidth") - sweepWidth) * (1 - Math.exp(-dt * 12));
     p.setYRot(heading + Math.sin(sweep) * sweepWidth);
-    p.setXRot(p.getXRot() + G.clamp(deps.setting("pitch") - p.getXRot(), -90 * dt, 90 * dt));
+    const pitch = Math.max(deps.setting("pitch"), terrainPitch);
+    p.setXRot(p.getXRot() + G.clamp(pitch - p.getXRot(), -90 * dt, 90 * dt));
     move(game, jumpHeld);
   }
 

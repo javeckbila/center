@@ -45,7 +45,35 @@ function createWorld(T) {
     return { blocked, jump: blocked && raisedClear && supported, safe: supported };
   }
 
-  return { selectHoe, terrain };
+  // Probe the collision surface underneath the current horizontal look. Crop
+  // outlines have no bearing on floor height, so use COLLIDER rather than
+  // OUTLINE. Prefer the farthest reachable crop center on a lower layer.
+  function lowerLayerPitch(game, yaw, normalPitch) {
+    const player = game.player;
+    const eye = player.getEyePosition();
+    const range = player.blockInteractionRange();
+    const radians = yaw * Math.PI / 180;
+    for (let distance = Math.min(3.25, range - 0.75); distance >= 0.75; distance -= 0.5) {
+      const x = player.getX() - Math.sin(radians) * distance;
+      const z = player.getZ() + Math.cos(radians) * distance;
+      if (!game.level.hasChunk(Math.floor(x / 16), Math.floor(z / 16))) continue;
+      const hit = game.level.clip(new T.ClipContext(
+        new T.Vec3(x, player.getY() + 0.1, z), new T.Vec3(x, player.getY() - 1.25, z),
+        T.ClipBlock.COLLIDER, T.ClipFluid.NONE, player));
+      if (hit.getType() !== T.HitType.BLOCK) continue;
+      const floorY = hit.getLocation().y;
+      const drop = player.getY() - floorY;
+      if (drop < 0.25 || drop > 1.2) continue;
+      // Aim inside a short crop, above the soil, within vanilla interaction reach.
+      const cropY = floorY + 0.45;
+      const dy = eye.y - cropY;
+      if (distance * distance + dy * dy > range * range) continue;
+      return Math.max(normalPitch, clamp(Math.atan2(dy, distance) * 180 / Math.PI, 0, 80));
+    }
+    return normalPitch;
+  }
+
+  return { selectHoe, terrain, lowerLayerPitch };
 }
 
 module.exports = { createWorld };

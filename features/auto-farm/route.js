@@ -8,11 +8,16 @@ function validPoint(p) {
     Math.abs(p.x) <= 30000000 && Math.abs(p.z) <= 30000000 && Math.abs(p.y) <= 2048;
 }
 
+function validRoute(saved) {
+  return !!saved && Array.isArray(saved.points) && saved.points.length <= MAX_POINTS &&
+    saved.points.every(validPoint) && (saved.points.length ? typeof saved.context === "string" && saved.context.length > 0 :
+      saved.context === null || typeof saved.context === "string");
+}
+
 function createRoute(saved, save) {
   let context = null;
   let points = [];
-  if (saved && typeof saved.context === "string" && Array.isArray(saved.points) &&
-      saved.points.length <= MAX_POINTS && saved.points.every(validPoint)) {
+  if (validRoute(saved)) {
     context = saved.context;
     points = saved.points.map(p => ({ x: p.x, y: p.y, z: p.z }));
   }
@@ -41,7 +46,14 @@ function createRoute(saved, save) {
     return null;
   }
   function clear() { points = []; context = null; save(snapshot()); }
-  return { snapshot, add, remove, clear };
+  function replace(saved) {
+    if (!validRoute(saved)) return "This config contains an invalid waypoint route.";
+    context = saved.context;
+    points = saved.points.map(p => ({ x: p.x, y: p.y, z: p.z }));
+    save(snapshot());
+    return null;
+  }
+  return { snapshot, add, remove, clear, replace };
 }
 
-module.exports = { createRoute, MAX_POINTS };
+module.exports = { createRoute, validRoute, MAX_POINTS };

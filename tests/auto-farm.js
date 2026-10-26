@@ -8,6 +8,8 @@ var ROUTE = require("center/features/auto-farm/route");
 var GEO = require("center/features/auto-farm/geometry");
 var RENDER = require("center/features/auto-farm/render");
 var MOCKF = require("center/tests/mock-farm-world");
+var FARM_WORLD = require("center/features/auto-farm/world");
+var PROFILES = require("center/features/auto-farm/profiles");
 
 function harness(points) {
   var w = MOCKF.createFarmWorld({});
@@ -41,6 +43,86 @@ function harness(points) {
 function released(h) {
   ["Up", "Down", "Left", "Right", "Jump", "Sprint", "Attack"].forEach(k => eq(h.w.game.options["key" + k].down, false, k + " released"));
 }
+
+function lowerPlot(h, edge) {
+  for (var x = -8; x <= 8; x++) for (var z = edge; z <= 14; z++) {
+    h.w.blocks.delete(x + ",63," + z);
+    h.w.blocks.set(x + ",62," + z, h.w.stone);
+    h.w.crops.set(x + ",63," + z, true);
+  }
+}
+
+test("saved configs survive reload and snapshots do not change with the working route", function () {
+  var disk = null;
+  var profiles = PROFILES.createProfiles(null, saved => { disk = JSON.parse(JSON.stringify(saved)); });
+  var route = { context: "farm", points: [{ x: 1, y: 64, z: 1 }, { x: 5, y: 63, z: 5 }] };
+  var values = { pitch: 25, sweepTime: 0.5, sprint: false };
+  eq(profiles.save("Wheat", route, values), null);
+  route.points[0].x = 99; values.pitch = 90;
+  profiles = PROFILES.createProfiles(disk, saved => { disk = saved; });
+  var loaded = profiles.load("WHEAT");
+  eq(loaded.route.points[0].x, 1); eq(loaded.values.pitch, 25);
+  loaded.route.points[0].x = 33; eq(profiles.load("wheat").route.points[0].x, 1);
+  var working = ROUTE.createRoute(null, () => {});
+  eq(working.replace(profiles.load("wheat").route), null); eq(working.snapshot().points[1].y, 63);
+  eq(working.replace({ context: "farm", points: [{ x: NaN }] }) !== null, true);
+  eq(working.snapshot().points.length, 2, "invalid load leaves working route intact");
+  eq(profiles.remove("wheat"), null); eq(profiles.names().length, 0);
+});
+
+test("config names, limits and corrupted saves are handled without affecting existing saves", function () {
+  var profiles = PROFILES.createProfiles([{ name: "broken", route: {}, values: {} }], () => {});
+  var route = { context: null, points: [] };
+  [undefined, "", "has spaces", "../route"].forEach(name => ok(profiles.save(name, route, {})));
+  for (var i = 0; i < 32; i++) eq(profiles.save("farm_" + i, route, { pitch: i }), null);
+  ok(profiles.save("extra", route, {}));
+  eq(profiles.save("FARM_0", route, { pitch: 45 }), null, "existing names can be overwritten");
+  eq(profiles.load("farm_0").values.pitch, 45); eq(profiles.names().length, 32);
+  eq(profiles.load("missing"), null); ok(profiles.remove("missing"));
+});
+
+test("lower-layer aiming detects the floor beneath crop outlines within reach", function () {
+  var h = harness(); lowerPlot(h, 2);
+  var world = FARM_WORLD.createWorld(h.w.T);
+  var pitch = world.lowerLayerPitch(h.w.game, 0, 20);
+  ok(pitch > 30 && pitch < 45, "aim lowered toward the next layer: " + pitch);
+  h.w.player.pitch = 20; h.w.updateHit();
+  ok(h.w.game.hitResult.getType() !== h.w.T.HitType.BLOCK, "normal pitch passes over lower crops");
+  h.w.player.pitch = pitch; h.w.updateHit();
+  eq(h.w.game.hitResult.getType(), h.w.T.HitType.BLOCK);
+  eq(h.w.game.hitResult.getBlockPos().getY(), 63, "aim hits the crop rather than air or soil");
+  eq(world.lowerLayerPitch(h.w.game, 0, 60), 60, "keeps a steeper configured pitch");
+});
+
+test("flat terrain, small surface offsets, voids and unloaded terrain keep normal pitch", function () {
+  var h = harness(); var world = FARM_WORLD.createWorld(h.w.T);
+  eq(world.lowerLayerPitch(h.w.game, 0, 20), 20);
+  h.w.player.y = 64.0625;
+  eq(world.lowerLayerPitch(h.w.game, 0, 20), 20, "small floor offsets ignored");
+  h.w.player.y = 64; lowerPlot(h, 2); h.w.loadedChunks = false;
+  eq(world.lowerLayerPitch(h.w.game, 0, 20), 20);
+  h.w.loadedChunks = true;
+  for (var x = -8; x <= 8; x++) for (var z = 2; z <= 14; z++) h.w.blocks.delete(x + ",62," + z);
+  eq(world.lowerLayerPitch(h.w.game, 0, 20), 20, "void does not invent a target floor");
+});
+
+test("pitch lowers before stepping off a layer and eases back after landing", function () {
+  var h = harness([{ x: 0.5, y: 63, z: 6.5 }, { x: 0.5, y: 64, z: 0.5 }]);
+  lowerPlot(h, 2); h.settings.sweepWidth = 10; h.w.player.pitch = 20;
+  ok(h.begin());
+  var aimedBeforeDrop = false, landed = false, previousPitch = h.w.player.pitch;
+  for (var i = 0; i < 35 && h.farmer.state().running; i++) {
+    h.cycle(true);
+    ok(Math.abs(h.w.player.pitch - previousPitch) <= 4.51, "pitch transition stays smooth");
+    previousPitch = h.w.player.pitch;
+    if (h.w.player.y > 63.99 && h.w.player.pitch > 30) aimedBeforeDrop = true;
+    if (h.w.player.y < 63.02 && h.w.grounded) { landed = true; break; }
+  }
+  ok(h.farmer.state().running, h.halts.join(", "));
+  ok(aimedBeforeDrop, "look lowered before the descent"); ok(landed, "landed on the lower layer");
+  h.run(20, false);
+  ok(Math.abs(h.w.player.pitch - 20) < 0.01, "returns to normal pitch after landing");
+});
 
 test("route appends, removes last or numbered, renumbers and survives reload", function () {
   var saved = null;
