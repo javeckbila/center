@@ -47,7 +47,18 @@ The old file is kept as a backup; future changes save only to the new location.
 Run `/ct load` after updating to migrate before deleting the module.
 See [Auto Farm](features/auto-farm/README.md) for waypoint and config commands.
 
-## Auto Miner player avoidance
+## Auto Miner
+
+Turns accelerate and brake smoothly, with a steady aim while breaking each
+block. Purple, red and lime glazed terracotta use faster turns automatically,
+as do other blocks that the held tool can break instantly. The **Glide** setting
+still controls overall turn speed: higher is slower, lower is faster.
+Latency affects the lead toward the next slow block, not camera turn speed.
+Mining progress and cooldowns remain controlled by Minecraft.
+
+Reload with `/ct load` to apply the mining changes; no new mixins are needed.
+
+### Player avoidance
 
 Auto Miner skips aim points blocked by another player and releases attack if
 someone steps into its mining ray. When a player overlaps you, it walks one

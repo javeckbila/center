@@ -215,7 +215,7 @@ module.exports = defineFeature({
   settings: [
     {
       type: "slider", key: "glide", name: "Glide", min: GLIDE_MIN, max: GLIDE_MAX, step: 0.05, default: 1, unit: "x",
-      description: "Camera smoothing. Higher turns slower and drifts wider; lower turns faster.",
+      description: "Smooth turn speed. Higher turns slower; lower turns faster. Terracotta uses quicker turns automatically.",
     },
     { type: "toggle", key: "showHud", name: "Show HUD", default: true },
     {

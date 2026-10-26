@@ -28,7 +28,7 @@ function harness(options) {
     game: function () { return w.game; },
     now: function () { return w.clock; },
     inGui: function () { return w.gui; },
-    glide: function () { return 1; },
+    glide: function () { return options.glide || 1; },
     onStart: function () { starts++; },
     onHalt: function (reason, opts) { halts.push({ reason: reason, refused: !!opts.refused }); },
   });
@@ -115,6 +115,22 @@ test("spring follows the shortest yaw arc and keeps velocity across a retarget",
   var before = axis.velocity;
   GEO.spring(axis, 140, 1 / 240, 12, 155, 700);
   ok(Math.abs(axis.velocity - before) <= 700 / 240 + 1e-8);
+});
+
+test("large turns brake without overshoot at low and high frame rates", function () {
+  [30, 60, 144, 240].forEach(function (fps) {
+    [2, 45, 179].forEach(function (goal) {
+      var axis = { value: 0, velocity: 0 };
+      for (var i = 0; i < fps * 3; i++) {
+        var previous = axis.value, velocity = axis.velocity;
+        GEO.spring(axis, goal, 1 / fps, 24, 360, 2600);
+        ok(axis.value >= previous - 1e-8 && axis.value <= goal + 1e-8, "no reversal or overshoot at " + fps + " fps");
+        ok(Math.abs(axis.velocity) <= 360 + 1e-8, "speed bounded");
+        ok(Math.abs(axis.velocity - velocity) <= 2600 / fps + 1e-8, "acceleration bounded");
+      }
+      ok(Math.abs(axis.value - goal) < 0.01, "settled on target");
+    });
+  });
 });
 
 test("return navigation detours around a blocked tile and rejects a blocked goal", function () {
@@ -269,7 +285,7 @@ test("visible blocks beyond interaction reach are never mined", function () {
   var h = harness({ simulateMining: true });
   h.w.player.blockInteractionRange = function () { return 1.5; };
   h.w.blocks.set("0,65,1", h.w.iron);
-  h.w.blocks.set("2,65,0", h.w.diamond);
+  h.w.blocks.set("3,65,0", h.w.diamond); // x=2 is exactly tangent to 1.5-block reach
   ok(h.begin());
   h.run(150, function () { return h.w.completed.length > 0; });
   eq(h.w.completed.length, 1);
@@ -278,7 +294,7 @@ test("visible blocks beyond interaction reach are never mined", function () {
   eq(h.w.completed.length, 1, "farther block still untouched");
   eq(h.s().target, null);
   eq(h.opts.keyAttack.down, false);
-  eq(h.w.blocks.get("2,65,0"), h.w.diamond);
+  eq(h.w.blocks.get("3,65,0"), h.w.diamond);
 });
 
 test("a target is dropped before mining if interaction reach shrinks", function () {
@@ -394,6 +410,85 @@ test("eight consecutive blocks are mined quickly with a single native start", fu
   eq(h.w.blocks.get("0,63,0"), h.w.cobble, "support block kept");
   h.step(); // the last completion is counted on the frame after its STOP packet
   eq(h.s().cleared, 8);
+});
+
+test("all three terracottas turn substantially faster even with slow local hardness", function () {
+  function acquisition(material, glide, ping) {
+    var h = harness({ glide: glide, ping: ping });
+    h.w.blocks.set("2,63,0", h.w[material]);
+    ok(h.begin());
+    var start = h.w.clock;
+    h.run(100, function () { return h.w.nativeStarts.length > 0; });
+    eq(h.w.nativeStarts.length, 1, "reached " + material);
+    return h.w.nativeStarts[0].time - start;
+  }
+  [0.25, 1, 2].forEach(function (glide) {
+    var normal = acquisition("cobble", glide, 120);
+    ["purpleGlazed", "redGlazed", "limeGlazed"].forEach(function (material) {
+      var fast = acquisition(material, glide, 120);
+      ok(fast < normal * 0.8, material + " acquisition: " + fast + " vs " + normal);
+      eq(acquisition(material, glide, 800), fast, "ping does not slow local turns");
+    });
+  });
+});
+
+test("instant terracotta chains quickly with smooth turns and no STOP packet", function () {
+  var h = harness({ simulateMining: true, requirePress: true, progress: 1 });
+  var materials = [h.w.purpleGlazed, h.w.redGlazed, h.w.limeGlazed];
+  var index = 0;
+  for (var x = -1; x <= 1; x++) for (var z = -1; z <= 1; z++) h.w.blocks.set(x + ",63," + z, materials[index++ % 3]);
+  ok(h.begin());
+  var originalStep = h.step;
+  h.step = function () {
+    var before = h.s();
+    originalStep();
+    var after = h.s();
+    ok(Math.abs(GEO.wrap(after.yaw - before.yaw)) <= 360 * 0.0125 + 1e-6, "no yaw snap");
+    ok(Math.abs(after.pitch - before.pitch) <= 360 * 0.0125 + 1e-6, "no pitch snap");
+  };
+  h.run(200, function () { return h.w.completed.length === 8; });
+  eq(h.w.completed.length, 8);
+  for (var i = 1; i < 8; i++) {
+    var gap = h.w.completed[i].time - h.w.completed[i - 1].time;
+    ok(gap < 0.65, "instant handoff took " + gap.toFixed(2) + "s");
+  }
+  eq(h.w.nativeStarts.length, 1, "native start only primes the run");
+  eq(h.w.aborts.length, 0);
+  eq(h.s().packets.stop, 0, "instant breaks only send START");
+  h.step();
+  eq(h.s().cleared, 8, "counts disappearance without STOP");
+  eq(h.opts.keyAttack.down, false, "no attack on replacement");
+  ok(h.w.blocks.get("0,63,0") !== h.w.stone, "support kept");
+});
+
+test("instant native startup releases attack before vanilla can hit the replacement", function () {
+  var h = harness({ simulateMining: true, progress: 1 });
+  h.w.blocks.set("0,63,1", h.w.redGlazed);
+  ok(h.begin());
+  h.run(60, function () { return h.w.completed.length === 1; });
+  eq(h.opts.keyAttack.down, false);
+  eq(h.game.gameMode.isDestroying(), false);
+  h.step();
+  eq(h.s().cleared, 1);
+  eq(h.w.aborts.length, 0);
+});
+
+test("mixed instant and slow blocks refresh timing at handoff and preserve vanilla cooldown", function () {
+  var h = harness({ simulateMining: true });
+  h.w.blocks.set("0,63,1", h.w.redGlazed);
+  h.w.blocks.set("1,63,1", h.w.debris);
+  h.w.blocks.set("1,63,0", h.w.limeGlazed);
+  h.w.progressAt = function (pos) { return h.w.blocks.get(pos.x + "," + pos.y + "," + pos.z) === h.w.debris ? 0.1 : 1; };
+  ok(h.begin());
+  h.run(200, function () { return h.w.completed.length === 1; });
+  h.step();
+  eq(h.s().target, "1,63,1");
+  eq(h.s().expectedTicks, 10, "new timing available on the first frame");
+  h.run(200, function () { return h.w.completed.length === 3; });
+  eq(h.w.completed.length, 3);
+  ok(h.w.completed[2].time - h.w.completed[1].time >= 0.25, "hard-block cooldown respected");
+  eq(h.w.nativeStarts.length, 1);
+  eq(h.w.aborts.length, 0, "hard block never interrupted");
 });
 
 // ---------- fair selection and regeneration ----------

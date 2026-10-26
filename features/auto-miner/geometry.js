@@ -43,14 +43,17 @@ function supportsFeet(pos, supportY, box) {
     pos.z + 1 > box.minZ + 0.001 && pos.z < box.maxZ - 0.001;
 }
 
-// Damped spring that keeps velocity across target changes. Fixed substeps make
-// acceleration and damping independent of the frame rate.
+// Velocity-preserving camera easing. Brake before reaching the goal instead of
+// clipping a spring's force (which loses damping on large turns and overshoots).
+// Fixed substeps keep acceleration and braking consistent across frame rates.
 function spring(axis, goal, dt, response, speed, acceleration) {
   let remaining = clamp(dt, 0, 0.1);
   while (remaining > 0) {
     const step = Math.min(remaining, 1 / 240);
-    const force = response * response * (goal - axis.value) - 2 * response * axis.velocity;
-    axis.velocity = clamp(axis.velocity + clamp(force, -acceleration, acceleration) * step, -speed, speed);
+    const error = goal - axis.value;
+    const limit = Math.min(speed, Math.sqrt(2 * acceleration * Math.abs(error)) * 0.8);
+    const desiredVelocity = clamp(error * response, -limit, limit);
+    axis.velocity += clamp(desiredVelocity - axis.velocity, -acceleration * step, acceleration * step);
     axis.value += axis.velocity * step;
     remaining -= step;
   }

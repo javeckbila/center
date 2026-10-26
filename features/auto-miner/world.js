@@ -12,11 +12,16 @@ const WALK_SAMPLE = 0.15; // blocks between collision samples along a walk segme
 function createWorld(T) {
   const blockPos = (x, y, z) => new T.BlockPos(x, y, z);
 
+  const terracotta = [T.Blocks.GLAZED_TERRACOTTA.purple(), T.Blocks.GLAZED_TERRACOTTA.red(), T.Blocks.GLAZED_TERRACOTTA.lime()];
   const targetBlocks = [
     T.Blocks.COBBLESTONE, T.Blocks.IRON_ORE, T.Blocks.DEEPSLATE_IRON_ORE,
     T.Blocks.DIAMOND_ORE, T.Blocks.DEEPSLATE_DIAMOND_ORE, T.Blocks.ANCIENT_DEBRIS,
-    T.Blocks.GLAZED_TERRACOTTA.purple(), T.Blocks.GLAZED_TERRACOTTA.red(), T.Blocks.GLAZED_TERRACOTTA.lime(),
+    ...terracotta,
   ];
+  function isTerracotta(game, pos) {
+    const state = game.level.getBlockState(pos);
+    return terracotta.some(block => state.is(block));
+  }
   function isTarget(game, pos) {
     const state = game.level.getBlockState(pos);
     return targetBlocks.some(block => state.is(block));
@@ -164,7 +169,7 @@ function createWorld(T) {
     return info ? clamp(info.getLatency(), 0, 2000) : 0;
   }
 
-  return { blockPos, isTarget, cast, hits, inReach, visiblePoint, rayAt, cameraRay, holdsPickaxe, selectPickaxe, walkable, latency,
+  return { blockPos, isTarget, isTerracotta, cast, hits, inReach, visiblePoint, rayAt, cameraRay, holdsPickaxe, selectPickaxe, walkable, latency,
     occupied, sidestep, jumpable };
 }
 

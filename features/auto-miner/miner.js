@@ -37,7 +37,6 @@ const HOME_DRIFT = 0.06;      // horizontal blocks from home that count as being
 const HOME_HEIGHT = 0.1;
 const EXIT_MARGIN = 0.88;     // fraction of the in-silhouette path used by pre-glide
 const IDLE_PITCH = 68;
-const DRIFT_AMOUNT = 0.026;   // blocks of aim-point drift at glide 1
 const TICK_SECONDS = 0.05;
 const SIDESTEP_SECONDS = 8;  // maximum time away, including the outward walk
 const CLEAR_SECONDS = 1;     // return once the player has left for this long
@@ -279,9 +278,24 @@ function createMiner(deps) {
     nextTarget = null;
     nextPlan = 0;
     stage = -1;
+    updateTiming(game);
     if (target) setStatus("gliding", "Gliding");
     else setStatus("waiting", "Waiting for reachable blocks");
     nextScan = time + SCAN_INTERVAL;
+  }
+
+  function updateTiming(game) {
+    if (!target) {
+      toolSpeed = progressPerTick = expectedTicks = 0;
+      return;
+    }
+    const blockState = game.level.getBlockState(target.pos);
+    toolSpeed = game.player.getDestroySpeed(blockState);
+    progressPerTick = blockState.getDestroyProgress(game.player, game.level, target.pos);
+    expectedTicks = G.miningTicks(progressPerTick);
+    // These server mining blocks break instantly even when local hardness says
+    // otherwise. Only camera timing changes; vanilla still owns the break.
+    target.fastTurn = W.isTerracotta(game, target.pos) || expectedTicks === 1;
   }
 
   function retireTarget(game, time, completed) {
@@ -339,9 +353,13 @@ function createMiner(deps) {
   }
 
   function planNext(game, time) {
-    if (!target || time < nextPlan) return;
+    if (!target || target.fastTurn || time < nextPlan) return;
     nextPlan = time + PLAN_INTERVAL;
-    nextTarget = findTarget(game, time, target.id);
+    // Keep a valid successor so small camera changes cannot flip the pre-glide
+    // direction back and forth. Handoff still rescans for newly exposed blocks.
+    const point = nextTarget && W.isTarget(game, nextTarget.pos) ? W.visiblePoint(game, nextTarget.pos) : null;
+    if (point) nextTarget.point = point;
+    else nextTarget = findTarget(game, time, target.id);
     const eye = vector(game.player.getEyePosition());
     target.exitLook = nextTarget ? safeLook(game, G.angles(eye, target.point), G.angles(eye, nextTarget.point)) : null;
   }
@@ -436,10 +454,7 @@ function createMiner(deps) {
     refreshTarget(game, time, true);
     if (!target) return releaseAttack(game);
 
-    const blockState = game.level.getBlockState(target.pos);
-    toolSpeed = game.player.getDestroySpeed(blockState);
-    progressPerTick = blockState.getDestroyProgress(game.player, game.level, target.pos);
-    expectedTicks = G.miningTicks(progressPerTick);
+    updateTiming(game);
     if (!isFinite(expectedTicks)) return retireTarget(game, time, false);
 
     if (attackOwned && game.gameMode.isDestroying()) markStarted(time);
@@ -471,7 +486,7 @@ function createMiner(deps) {
       if (!target.started) {
         if (startup.result === "rejected") setStatus("rejected", "Mining start rejected");
         else setStatus("starting", "Starting mining");
-      } else if (target.exitLook && G.glideWeight(stage, progressPerTick, pingMs) > 0) setStatus("mining", "Pre-gliding");
+      } else if (!target.fastTurn && target.exitLook && G.glideWeight(stage, progressPerTick, pingMs) > 0) setStatus("mining", "Pre-gliding");
       else setStatus("mining", "Mining");
     } else {
       releaseAttack(game);
@@ -528,15 +543,10 @@ function createMiner(deps) {
     const eye = vector(game.player.getEyePosition());
     let look;
     if (target) {
-      // Slow drift across the chosen face; spring velocity carries across retargets.
-      const amount = DRIFT_AMOUNT * g;
-      const point = {
-        x: G.clamp(target.point.x + amount * Math.sin(time * 1.73), target.pos.getX() + 0.01, target.pos.getX() + 0.99),
-        y: G.clamp(target.point.y + amount * 0.35 * Math.sin(time * 1.19 + 1.2), target.pos.getY() + 0.01, target.pos.getY() + 0.99),
-        z: G.clamp(target.point.z + amount * Math.cos(time * 1.41), target.pos.getZ() + 0.01, target.pos.getZ() + 0.99),
-      };
-      look = G.angles(eye, point);
-      if (target.started && target.exitLook) {
+      // A stable aim point avoids twitching at narrow edges. Acceleration and
+      // braking provide the smooth motion, with velocity carried across targets.
+      look = G.angles(eye, target.point);
+      if (target.started && target.exitLook && !target.fastTurn) {
         // Ping glide: lead toward the successor during the final ticks of the break.
         const weight = G.glideWeight(stage, progressPerTick, pingMs);
         look.yaw += G.wrap(target.exitLook.yaw - look.yaw) * weight;
@@ -548,18 +558,22 @@ function createMiner(deps) {
         pitch: IDLE_PITCH + 0.7 * g * Math.sin(time * 0.93 + 1),
       };
     }
-    const response = G.clamp(13 - pingMs / 180 + (expectedTicks > 0 && expectedTicks <= 3 ? 2 : 0), 7, 15);
-    const speed = 155 / g;
-    G.spring(yaw, yaw.value + G.wrap(look.yaw - yaw.value), dt, response, speed, 700);
-    G.spring(pitch, G.clamp(look.pitch, -89.5, 89.5), dt, response, speed, 600);
+    const fast = target && target.fastTurn;
+    const response = (fast ? 24 : 16) / Math.sqrt(g);
+    const speed = (fast ? 360 : 200) / g;
+    const acceleration = (fast ? 2600 : 1200) / g;
+    const previous = { yaw: yaw.value, pitch: pitch.value };
+    G.spring(yaw, yaw.value + G.wrap(look.yaw - yaw.value), dt, response, speed, acceleration);
+    G.spring(pitch, G.clamp(look.pitch, -89.5, 89.5), dt, response, speed, acceleration);
     pitch.value = G.clamp(pitch.value, -89.5, 89.5);
     if (target && attackOwned && target.started && !W.hits(W.rayAt(game, { yaw: yaw.value, pitch: pitch.value }), target.pos)) {
-      // Never let the spring overshoot off a block that is still breaking.
-      const safe = safeLook(game, G.angles(eye, target.point), { yaw: yaw.value, pitch: pitch.value });
+      // Clip only this frame's movement at the edge. Starting at the face centre
+      // here used to snap the camera backwards during a break.
+      const safe = safeLook(game, previous, { yaw: yaw.value, pitch: pitch.value });
       yaw.value += G.wrap(safe.yaw - yaw.value);
       pitch.value = safe.pitch;
-      yaw.velocity *= 0.5;
-      pitch.velocity *= 0.5;
+      yaw.velocity = 0;
+      pitch.velocity = 0;
     }
     game.player.setYRot(yaw.value);
     game.player.setXRot(pitch.value);

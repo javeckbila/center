@@ -91,6 +91,7 @@ function createMockWorld(options) {
   };
   var targetBlocks = [w.cobble, w.iron, w.deepslateIron, w.diamond, w.deepslateDiamond, w.debris,
     w.purpleGlazed, w.redGlazed, w.limeGlazed];
+  w.progressAt = function () { return w.progress; };
   var BLOCK = { name: "BLOCK" };
   var MISS = { name: "MISS" };
   var actions = { START_DESTROY_BLOCK: { name: "START" }, STOP_DESTROY_BLOCK: { name: "STOP" }, ABORT_DESTROY_BLOCK: { name: "ABORT" } };
@@ -146,7 +147,7 @@ function createMockWorld(options) {
     getBlockState: function (p) {
       return {
         is: function (b) { return w.blocks.get(blockId(p)) === b; },
-        getDestroyProgress: function () { return w.progress; },
+        getDestroyProgress: function () { return w.progressAt(p); },
         getFluidState: function () { return { isEmpty: function () { return true; } }; },
       };
     },
@@ -204,7 +205,10 @@ function createMockWorld(options) {
         if (ignoredNativeStarts > 0) { ignoredNativeStarts--; return false; }
         if (options.rejectNativeStarts) return false;
         attackPrimed = true;
-        mining = { pos: pos, progress: 0 };
+        // Vanilla's instant path removes the block during startDestroyBlock,
+        // sends only START, and never enters the crack/cooldown path.
+        if (w.progressAt(pos) >= 1) complete(pos, true);
+        else mining = { pos: pos, progress: 0 };
         emit(actions.START_DESTROY_BLOCK, pos);
         return true;
       },
@@ -268,6 +272,16 @@ function createMockWorld(options) {
     if (id === "0,63,0") fail("attack held on the support block");
   };
 
+  function complete(pos, instant) {
+    mining = null;
+    destroyDelay = instant ? 0 : 5;
+    w.completed.push({ id: blockId(pos), time: w.clock });
+    if (!instant) emit(actions.STOP_DESTROY_BLOCK, pos);
+    if (options.replacementDelay) pending.push({ id: blockId(pos), time: w.clock + options.replacementDelay, block: w.stone });
+    else w.blocks.set(blockId(pos), w.stone);
+    if (options.regenDelay) pending.push({ id: blockId(pos), time: w.clock + options.regenDelay, block: w.cobble });
+  }
+
   // Simplified MultiPlayerGameMode.continueDestroyBlock for one tick.
   w.vanillaMining = function () {
     if (!attackPrimed) return;
@@ -277,22 +291,17 @@ function createMockWorld(options) {
     }
     if (destroyDelay > 0) { destroyDelay--; return; }
     var pos = game.hitResult.getBlockPos();
+    var progress = w.progressAt(pos);
     if (!mining || !mining.pos.equals(pos)) {
       if (mining) emit(actions.ABORT_DESTROY_BLOCK, mining.pos);
-      mining = { pos: pos, progress: 0 };
+      if (progress >= 1) complete(pos, true);
+      else mining = { pos: pos, progress: 0 };
       emit(actions.START_DESTROY_BLOCK, pos);
-      if (w.progress < 1) return;
+      return;
     }
-    mining.progress += w.progress;
+    mining.progress += progress;
     if (mining.progress < 1 - 1e-8) return;
-    mining = null;
-    destroyDelay = 5;
-    w.completed.push({ id: blockId(pos), time: w.clock });
-    emit(actions.STOP_DESTROY_BLOCK, pos);
-    if (options.replacementDelay) pending.push({ id: blockId(pos), time: w.clock + options.replacementDelay, block: w.stone });
-    else w.blocks.set(blockId(pos), w.stone);
-    // Server-side regeneration: the replacement turns back into cobblestone.
-    if (options.regenDelay) pending.push({ id: blockId(pos), time: w.clock + options.regenDelay, block: w.cobble });
+    complete(pos, false);
   };
 
   // Simplified player movement from the held movement keys for one tick.
