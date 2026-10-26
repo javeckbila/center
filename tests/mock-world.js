@@ -82,7 +82,10 @@ function createMockWorld(options) {
   var attackPrimed = !options.requirePress;
   var ignoredNativeStarts = options.ignoreNativeStarts || 0;
 
-  var opts = { pauseOnLostFocus: true };
+  var opts = { pauseOnLostFocus: true, cameraType: "first",
+    getCameraType: function () { return this.cameraType; },
+    setCameraType: function (type) { this.cameraType = type; },
+  };
   ["Up", "Down", "Left", "Right", "Jump", "Shift", "Use", "Attack", "Sprint"].forEach(function (k) { opts["key" + k] = binding(); });
 
   w.stack = function (pickaxe, remaining) {
@@ -209,6 +212,7 @@ function createMockWorld(options) {
     PlayerActionPacket: ActionPacket, PlayerAction: actions, InteractionHand: { MAIN_HAND: "MAIN_HAND" },
   };
   w.typeByName = {};
+  w.typeByName["net.minecraft.client.CameraType"] = { FIRST_PERSON: "first", THIRD_PERSON_BACK: "back", THIRD_PERSON_FRONT: "front" };
   Object.keys(TYPE_NAMES).forEach(function (k) { w.typeByName[TYPE_NAMES[k]] = w.T[k]; });
   w.emit = emit;
 

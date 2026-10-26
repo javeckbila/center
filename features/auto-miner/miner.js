@@ -14,6 +14,7 @@
 //   now()    seconds (monotonic)
 //   inGui()  whether a screen is open
 //   glide()  camera glide factor, 0.25..2
+//   view     perspective session (start/stop), shared with other automations
 //   onStart()                 mining began after start()
 //   onHalt(reason, { refused, silent })  the miner stopped itself
 // Lifecycle: start() arms it; once no screen has been open for ARM_TICKS ticks
@@ -72,7 +73,6 @@ function createMiner(deps) {
   let cleared = 0;
   let attackOwned = false;
   let rec = null;
-  let focusPauseBefore = null;
   let lastInput = "no mining tick observed";
   const movementOwned = new Set();
   const cooldowns = new Map();
@@ -175,10 +175,7 @@ function createMiner(deps) {
     nextTarget = null;
     anchor = null;
     rec = null;
-    if (focusPauseBefore !== null) {
-      game.options.pauseOnLostFocus = focusPauseBefore;
-      focusPauseBefore = null;
-    }
+    deps.view.stop();
     setStatus("off", reason || "Off");
     return true;
   }
@@ -217,9 +214,7 @@ function createMiner(deps) {
     startup.result = "not attempted";
     packets.start = packets.abort = packets.stop = 0;
     lastInput = "no mining tick observed";
-    // Alt-tab must not pause the game mid-run; restored by stop().
-    focusPauseBefore = game.options.pauseOnLostFocus;
-    game.options.pauseOnLostFocus = false;
+    deps.view.start();
     phase = "running";
     setStatus("scanning", "Scanning");
     if (deps.onStart) deps.onStart();

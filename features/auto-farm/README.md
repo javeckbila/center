@@ -68,6 +68,12 @@ spectator mode, lava, losing all usable hoes, unsafe drops and persistent
 impassable obstacles stop farming and release its inputs. Auto Farm and Auto
 Miner cannot control the player simultaneously.
 
+While running, Auto Farm switches to third-person perspective and disables
+pause on lost focus. Mouse movement orbits the view without changing the
+farmer's aim or steering. Stopping restores both previous options. This is
+shared with Auto Miner and requires a full Minecraft restart after installing
+the camera/mouse mixins; `/ct load` alone cannot install them.
+
 The controller holds vanilla attack and automatically selects a usable
 hotbar hoe, switching to a spare before its final durability point. It restores
 the previous hotbar slot when stopped. Crops are harvested using ordinary

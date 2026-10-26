@@ -55,6 +55,7 @@ function createFarmer(deps) {
     // Keep the original bindings: player/level may already be null on unload.
     let error = null;
     try { releaseInputs(); } catch (e) { error = e; }
+    try { deps.view.stop(); } catch (e) { error = e; }
     try {
       if (inventory && inventory.getSelectedSlot() === hoeSlot && oldSlot >= 0) inventory.setSelectedSlot(oldSlot);
     } catch (e) { error = e; }
@@ -118,6 +119,7 @@ function createFarmer(deps) {
     lastJump = -Infinity;
     airborneSince = null;
     previous = { x: game.player.getX(), y: game.player.getY(), z: game.player.getZ() };
+    deps.view.start();
     phase = "running";
     status = "Waypoint 1 / " + route.points.length;
     if (deps.onStart) deps.onStart();

@@ -10,6 +10,7 @@ const theme = require("../../gui/theme");
 const { createRoute } = require("./route");
 const { createProfiles } = require("./profiles");
 const { createFarmer } = require("./farmer");
+const automationView = require("../../core/automation-view");
 const { renderRoute } = require("./render");
 
 const ID = "auto-farm";
@@ -232,6 +233,7 @@ module.exports = registry.defineFeature({
       return;
     }
     farmer = createFarmer({
+      view: automationView,
       T: types, game: () => Client.getMinecraft(), now: () => Clock.nanoTime() / 1e9,
       route: route.snapshot, context, inGui: () => Client.isInGui(), setting: key => f.get(key),
       onStart: () => say("&aOn. Following the waypoint loop. /af stop or your toggle key stops farming."),

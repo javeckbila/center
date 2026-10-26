@@ -22,6 +22,9 @@ function harness(points) {
   var nativeHits = [];
   w.game.gameMode.startDestroyBlock = function (pos) { nativeHits.push(pos); return true; };
   var farmer = FARM.createFarmer({
+    view: require("center/core/perspective").createPerspective({
+      game: () => w.game, inGui: () => w.gui, thirdPerson: "back",
+    }),
     T: w.T, game: () => w.game, route: () => saved, context: () => currentContext,
     now: () => w.clock, inGui: () => w.gui, setting: key => settings[key],
     onStart: () => starts++, onHalt: reason => halts.push(reason),
@@ -188,6 +191,16 @@ test("start waits for chat, selects a hotbar hoe, and restores the old slot on s
   h.cycle(); ok(h.w.game.options.keyAttack.down);
   h.farmer.stop(); released(h); eq(h.w.selectedSlot, 0);
   eq(h.farmer.stop(), false, "idempotent stop");
+});
+
+test("farming continues after alt-tab and restores an existing front view and focus preference", function () {
+  var h = harness(); h.w.game.options.setCameraType("front");
+  ok(h.begin()); eq(h.w.game.options.getCameraType(), "back");
+  eq(h.w.game.options.pauseOnLostFocus, false);
+  h.w.focused = false; h.run(80, true);
+  ok(h.farmer.state().running); ok(h.w.player.z > 0.5, "keeps following the route in the background");
+  h.farmer.stop(); released(h);
+  eq(h.w.game.options.getCameraType(), "front"); eq(h.w.game.options.pauseOnLostFocus, true);
 });
 
 test("missing route, wrong world, no hoe and nearly broken hoes refuse safely", function () {

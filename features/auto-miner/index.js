@@ -12,6 +12,7 @@ const { defer } = require("../../core/defer");
 const draw = require("../../gui/draw");
 const theme = require("../../gui/theme");
 const { createMiner } = require("./miner");
+const automationView = require("../../core/automation-view");
 
 const ID = "auto-miner";
 const LEGACY_MODULE = "auto-miner"; // the standalone MVP module this replaces
@@ -246,6 +247,7 @@ module.exports = defineFeature({
     }
     miner = createMiner({
       T,
+      view: automationView,
       game: () => Client.getMinecraft(),
       now: () => Clock.nanoTime() / 1e9,
       inGui: () => Client.isInGui(),

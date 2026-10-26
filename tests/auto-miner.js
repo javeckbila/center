@@ -21,6 +21,9 @@ function harness(options) {
   var halts = [];
   var starts = 0;
   var miner = MINER.createMiner({
+    view: require("center/core/perspective").createPerspective({
+      game: () => w.game, inGui: () => w.gui, thirdPerson: "back",
+    }),
     T: w.T,
     game: function () { return w.game; },
     now: function () { return w.clock; },

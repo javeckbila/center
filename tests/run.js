@@ -96,6 +96,23 @@ var Java = {
     throw new Error("class not found " + name);
   },
 };
+// Dynamic mixins are installed at game startup; exercise their attached live
+// callbacks here with vanilla-shaped argument bags.
+var mixinDefinitions = [];
+function At(options) { this.options = options; }
+function Mixin(target) { this.target = target; }
+Mixin.prototype.modifyArgs = function (options) {
+  var hook = { target: this.target, options: options, attach: function (fn) { this.fn = fn; } };
+  mixinDefinitions.push(hook);
+  return hook;
+};
+function invokeViewHook(name, receiver, a, b) {
+  var values = [a, b];
+  require("center/mixins")[name].fn(receiver, {
+    get: function (i) { return values[i]; }, set: function (i, v) { values[i] = Number(v); },
+  });
+  return values;
+}
 function Gui() { this._cb = {}; this._open = false; }
 ["Draw", "Clicked", "MouseReleased", "Scrolled", "KeyTyped", "Opened", "Closed", "MouseDragged"].forEach(function (n) {
   Gui.prototype["register" + n] = function (fn) { this._cb[n.charAt(0).toLowerCase() + n.slice(1)] = fn; return this; };
@@ -639,10 +656,27 @@ test("/am from chat arms, starts once chat closes, and draws its HUD", function 
   ticks(2);
   ok(chatHas("On. Mining reachable cobblestone, iron ore, diamond ore, ancient debris, and purple, red or lime glazed terracotta"), "started");
   eq(mc.options.pauseOnLostFocus, false, "focus pause disabled while running");
+  eq(mc.options.getCameraType(), "back", "third person while running");
   ticks(1); // first scan: nothing to mine in the mock world yet
   var texts = overlayTexts();
   ok(texts.indexOf("Auto Miner") >= 0 && texts.indexOf("Waiting for reachable blocks") >= 0, "HUD drawn: " + texts.join(", "));
   ok(texts.indexOf("Cleared") >= 0, "details shown");
+});
+
+test("physical mouse controls the perspective without turning the miner or its target ray", function () {
+  var yaw = mc.player.getYRot(), pitch = mc.player.getXRot();
+  MOCKW.updateHit(); var hit = mc.hitResult;
+  var angles = invokeViewHook("cameraRotation", { entity: () => mc.player }, 50, 40);
+  var delta = invokeViewHook("mouseTurn", {}, 120, -40);
+  eq(delta[0], 0); eq(delta[1], 0);
+  var turned = invokeViewHook("cameraRotation", { entity: () => mc.player }, 50, 40);
+  ok(Math.abs(turned[0] - angles[0] - 18) < 0.001);
+  ok(Math.abs(turned[1] - angles[1] + 6) < 0.001);
+  eq(mc.player.getYRot(), yaw); eq(mc.player.getXRot(), pitch); eq(mc.hitResult, hit);
+  frames();
+  var afterAutomation = invokeViewHook("cameraRotation", { entity: () => mc.player }, -99, -99);
+  eq(afterAutomation[0], turned[0], "automation cannot drag the orbit view");
+  eq(afterAutomation[1], turned[1]);
 });
 
 test("opening chat stops the miner; /am typed in that chat does not restart it", function () {
@@ -652,6 +686,9 @@ test("opening chat stops the miner; /am typed in that chat does not restart it",
   fire("guiopened", chatScreen);
   ok(chatHas("Stopped: Screen opened."), "reason announced");
   eq(mc.options.pauseOnLostFocus, true, "focus pause restored immediately");
+  eq(mc.options.getCameraType(), "first", "view restored immediately");
+  var normal = invokeViewHook("mouseTurn", {}, 12, 5);
+  eq(normal[0], 12); eq(normal[1], 5);
   frames();
   ok(!miner.isEnabled(), "feature switched off on the next frame");
   fireCommand("auto-miner");
@@ -781,8 +818,14 @@ test("auto farm waits for chat, stops on screens, and never fights Auto Miner", 
   ticks(2); ok(farmFeature.isEnabled()); eq(MOCKW.selectedSlot, 0, "waits for chat");
   currentScreen = null;
   ticks(2); eq(MOCKW.selectedSlot, 4, "hoe equipped"); eq(mc.options.keyAttack.down, true);
+  eq(mc.options.pauseOnLostFocus, false, "farming keeps running without focus");
+  eq(mc.options.getCameraType(), "back");
+  var yaw = mc.player.getYRot(), pitch = mc.player.getXRot();
+  eq(invokeViewHook("mouseTurn", {}, 70, 30)[0], 0);
+  eq(mc.player.getYRot(), yaw); eq(mc.player.getXRot(), pitch);
   currentScreen = chatScreen; fire("guiopened", chatScreen);
   eq(mc.options.keyAttack.down, false, "release is immediate");
+  eq(mc.options.pauseOnLostFocus, true); eq(mc.options.getCameraType(), "first");
   frames(); ok(!farmFeature.isEnabled());
   fireCommand("auto-farm"); frames(); ok(!farmFeature.isEnabled(), "same stopping chat does not toggle back on");
   currentScreen = null;
@@ -790,6 +833,7 @@ test("auto farm waits for chat, stops on screens, and never fights Auto Miner", 
   ticks(2); ok(farmFeature.isEnabled());
   miner.setEnabled(true); ok(!farmFeature.isEnabled(), "miner disables farm");
   eq(mc.options.keyAttack.down, false); miner.setEnabled(false);
+  eq(mc.options.getCameraType(), "first"); eq(mc.options.pauseOnLostFocus, true, "switching automations preserves the original options");
 });
 
 test("auto farm HUD previews while disabled and shutdown/unload release all inputs", function () {
@@ -802,9 +846,11 @@ test("auto farm HUD previews while disabled and shutdown/unload release all inpu
   farmFeature.setEnabled(true); ticks(2);
   ok(overlayTexts().indexOf("Auto Farm") >= 0);
   fire("worldunload"); frames(); ok(!farmFeature.isEnabled());
+  eq(mc.options.getCameraType(), "first"); eq(mc.options.pauseOnLostFocus, true);
   ["Up", "Down", "Left", "Right", "Attack", "Jump", "Sprint"].forEach(k => eq(mc.options["key" + k].down, false));
   farmFeature.setEnabled(true); ticks(2); fire("gameunload");
   eq(mc.options.keyAttack.down, false); eq(mc.options.keyUp.down, false);
+  eq(mc.options.getCameraType(), "first"); eq(mc.options.pauseOnLostFocus, true);
   farmFeature.setEnabled(false);
 });
 
