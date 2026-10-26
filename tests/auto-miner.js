@@ -59,19 +59,25 @@ function harness(options) {
 
 // ---------- pure helpers ----------
 
-test("mining area covers a full 5x5x5 cube around positive and negative positions", function () {
+test("reach scan includes every intersecting block box at positive and negative coordinates", function () {
   [[0.5, 64, 0.5], [-15.8, -12, -21.3]].forEach(function (c) {
-    var region = GEO.cube(c[0], c[1], c[2]);
-    eq(region.blocks.length, 125);
-    eq(new Set(region.blocks.map(function (p) { return p.x + "," + p.y + "," + p.z; })).size, 125);
-    var floorY = Math.floor(c[1] - 0.01);
-    eq(region.supportY, floorY);
-    eq(region.topY, floorY + 4);
-    eq(new Set(region.blocks.map(function (p) { return p.x; })).size, 5);
-    eq(new Set(region.blocks.map(function (p) { return p.z; })).size, 5);
-    for (var y = floorY; y <= floorY + 4; y++) {
-      eq(region.blocks.filter(function (p) { return p.y === y; }).length, 25, "full layer at " + y);
-    }
+    var eye = { x: c[0], y: c[1] + 1.62, z: c[2] };
+    [1.5, 4.5, 6].forEach(function (range) {
+      var blocks = GEO.reachBlocks(eye, range);
+      var ids = new Set(blocks.map(function (p) { return p.x + "," + p.y + "," + p.z; }));
+      eq(ids.size, blocks.length, "no duplicates");
+      for (var x = Math.floor(eye.x - range) - 1; x <= Math.ceil(eye.x + range); x++) {
+        for (var y = Math.floor(eye.y - range) - 1; y <= Math.ceil(eye.y + range); y++) {
+          for (var z = Math.floor(eye.z - range) - 1; z <= Math.ceil(eye.z + range); z++) {
+            var dx = Math.max(x - eye.x, 0, eye.x - x - 1);
+            var dy = Math.max(y - eye.y, 0, eye.y - y - 1);
+            var dz = Math.max(z - eye.z, 0, eye.z - z - 1);
+            // Tangent boxes at the lower integer boundary need no interior aim point.
+            if (dx * dx + dy * dy + dz * dz < range * range) ok(ids.has(x + "," + y + "," + z), "reachable box included");
+          }
+        }
+      }
+    });
   });
 });
 
@@ -142,7 +148,7 @@ test("start arms, waits for open screens, then begins; stop is idempotent", func
 });
 
 test("start refuses without a pickaxe, with movement held, or with attack held", function () {
-  [["pickaxe", "Hold a pickaxe"], ["move", "Stand still"], ["attack", "Release your attack key"]].forEach(function (c) {
+  [["pickaxe", "Put a pickaxe"], ["move", "Stand still"], ["attack", "Release your attack key"]].forEach(function (c) {
     var h = harness();
     if (c[0] === "pickaxe") h.w.hasPickaxe = false;
     if (c[0] === "move") h.opts.keyUp.down = true;
@@ -242,12 +248,12 @@ test("every supported material is mined at floor, feet, head and overhead height
   });
 });
 
-test("air, other materials and targets outside the cube are ignored", function () {
+test("air, other materials and targets outside reach are ignored", function () {
   var h = harness({ simulateMining: true });
   h.w.blocks.set("0,64,1", h.w.stone);
-  h.w.blocks.set("0,68,1", h.w.diamond);
-  h.w.blocks.set("0,62,1", h.w.iron);
-  h.w.blocks.set("3,65,0", h.w.debris);
+  h.w.blocks.set("0,71,1", h.w.diamond);
+  h.w.blocks.set("0,59,1", h.w.iron);
+  h.w.blocks.set("6,65,0", h.w.debris);
   ok(h.begin());
   h.run(100);
   eq(h.s().target, null);
@@ -386,7 +392,7 @@ test("eight consecutive blocks are mined quickly with a single native start", fu
   eq(h.s().cleared, 8);
 });
 
-// ---------- nearest-block selection ----------
+// ---------- fair selection and regeneration ----------
 
 function mineRegenerating(options, count) {
   var h = harness(Object.assign({ simulateMining: true, regenDelay: 3 }, options));
@@ -397,7 +403,7 @@ function mineRegenerating(options, count) {
   return h.w.completed.map(function (c) { return c.id; });
 }
 
-test("closest block wins over a smaller camera turn or a higher layer", function () {
+test("a small camera turn wins over a closer block to the side", function () {
   var h = harness();
   h.w.player.yaw = 0;
   h.w.player.pitch = 0;
@@ -406,7 +412,7 @@ test("closest block wins over a smaller camera turn or a higher layer", function
   h.w.blocks.set("1,66,1", h.w.diamond); // higher but farther
   ok(h.begin());
   h.cycle();
-  eq(h.s().target, "-1,65,0");
+  eq(h.s().target, "0,65,2");
 });
 
 test("closest targetable block skips a nearer occluded ore", function () {
@@ -426,20 +432,129 @@ test("regenerating blocks use a deterministic order and preserve support", funct
   ok(a.indexOf("0,63,0") < 0, "support block never mined");
 });
 
-test("handoff rescans for a newly available closer block", function () {
+test("handoff rescans and prefers a newly exposed block ahead", function () {
   var h = harness();
   h.w.blocks.set("0,65,1", h.w.cobble);
-  h.w.blocks.set("0,65,2", h.w.iron);
+  h.w.blocks.set("-1,65,0", h.w.iron);
   ok(h.begin());
   h.run(50, function () { return h.opts.keyAttack.down; });
   eq(h.s().target, "0,65,1");
-  h.w.blocks.set("-1,65,0", h.w.diamond);
+  h.w.blocks.set("0,65,2", h.w.diamond);
   h.w.blocks.delete("0,65,1");
   h.step();
-  eq(h.s().target, "-1,65,0");
+  eq(h.s().target, "0,65,2");
 });
 
-test("recent mining does not penalise a regenerated closest block", function () {
+test("rapid regeneration visits the whole reachable layer before repeating", function () {
+  var ids = mineRegenerating({ regenDelay: 0.1 }, 48);
+  eq(new Set(ids.slice(0, 24)).size, 24, "all other floor blocks before any repeat");
+  eq(new Set(ids.slice(24, 48)).size, 24, "second sweep also covers every position");
+});
+
+test("a lone completed position waits for the delayed intermediate block", function () {
+  var h = harness({ simulateMining: true, replacementDelay: 1.2, regenDelay: 1.8 });
+  h.w.blocks.set("0,65,1", h.w.cobble);
+  ok(h.begin());
+  h.run(100, function () { return h.w.completed.length === 1; });
+  h.run(20); // one second: replacement has not arrived yet
+  eq(h.w.completed.length, 1, "stale target was not mined again");
+  eq(h.s().target, null);
+  eq(h.opts.keyAttack.down, false);
+  h.run(100, function () { return h.w.completed.length === 2; });
+  eq(h.w.completed.length, 2, "regenerated target becomes available");
+});
+
+test("missed regeneration transitions do not exclude a lone position forever", function () {
+  var h = harness({ simulateMining: true, replacementDelay: 100 });
+  h.w.blocks.set("0,65,1", h.w.cobble);
+  ok(h.begin());
+  h.run(200, function () { return h.w.completed.length === 2; });
+  eq(h.w.completed.length, 2, "fallback permits retry after update deadline");
+  ok(h.w.completed[1].time - h.w.completed[0].time >= 2, "waited for update deadline");
+});
+
+test("reachable blocks beyond the old cube are mined in every direction", function () {
+  ["4,65,0", "-4,65,0", "0,65,4", "0,65,-4", "0,69,1", "0,61,1"].forEach(function (id) {
+    var h = harness({ simulateMining: true });
+    h.w.blocks.set(id, h.w.diamond);
+    ok(h.begin());
+    h.run(300, function () { return h.w.completed.length > 0; });
+    eq(h.w.completed.length, 1, id + " mined");
+    eq(h.w.completed[0].id, id);
+  });
+});
+
+test("reach scan expands when the player's interaction range increases", function () {
+  var h = harness({ simulateMining: true });
+  h.w.blocks.set("6,65,0", h.w.diamond);
+  ok(h.begin());
+  h.run(20);
+  eq(h.s().target, null);
+  h.w.player.blockInteractionRange = function () { return 6; };
+  h.run(300, function () { return h.w.completed.length > 0; });
+  eq(h.w.completed.length, 1);
+});
+
+test("an edge within reach is mined even when face centres are too far away", function () {
+  var h = harness({ simulateMining: true });
+  h.w.player.blockInteractionRange = function () { return 2.14; };
+  h.w.blocks.set("2,65,2", h.w.diamond);
+  ok(h.begin());
+  h.run(300, function () { return h.w.completed.length > 0; });
+  eq(h.w.completed.length, 1);
+});
+
+test("start selects a hotbar pickaxe and skips its last durability point", function () {
+  var h = harness();
+  h.w.hasPickaxe = false;
+  h.w.hotbar[1] = h.w.stack(true, 1);
+  h.w.hotbar[5] = h.w.stack(true, 2);
+  ok(h.begin());
+  eq(h.w.selectedSlot, 5);
+});
+
+test("a valid held pickaxe stays selected", function () {
+  var h = harness();
+  h.w.hotbar[1] = h.w.stack(true, 90);
+  ok(h.begin());
+  eq(h.w.selectedSlot, 0);
+});
+
+test("refused starts leave the selected slot alone", function () {
+  var h = harness();
+  h.w.hasPickaxe = false;
+  h.w.hotbar[4] = h.w.stack(true, 50);
+  h.opts.keyAttack.down = true;
+  ok(!h.begin());
+  eq(h.w.selectedSlot, 0);
+});
+
+test("only nearly broken pickaxes in the hotbar refuses startup", function () {
+  var h = harness();
+  h.w.hasPickaxe = false;
+  h.w.hotbar[2] = h.w.stack(true, 1);
+  ok(!h.begin());
+  eq(h.w.selectedSlot, 0);
+  eq(h.opts.keyAttack.down, false);
+});
+
+test("a nearly broken pickaxe swaps to a spare and mining resumes", function () {
+  var h = harness({ simulateMining: true });
+  h.w.blocks.set("0,65,1", h.w.cobble);
+  h.w.hotbar[4] = h.w.stack(true, 50);
+  ok(h.begin());
+  h.run(100, function () { return h.opts.keyAttack.down; });
+  ok(h.opts.keyAttack.down);
+  h.w.hotbar[0] = h.w.stack(true, 1);
+  h.step();
+  eq(h.opts.keyAttack.down, false, "released before switching tools");
+  h.run(100, function () { return h.w.completed.length > 0; });
+  eq(h.w.selectedSlot, 4);
+  eq(h.w.completed.length, 1);
+  ok(h.s().running);
+});
+
+test("a regenerated block remains available when no alternatives remain", function () {
   var h = harness({ simulateMining: true, regenDelay: 0.25 });
   h.w.blocks.set("0,65,1", h.w.cobble);
   ok(h.begin());

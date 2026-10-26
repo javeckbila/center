@@ -34,7 +34,12 @@ function createWorld(T) {
 
   // A point on a face of `pos` that the eye can see and reach, or null.
   function visiblePoint(game, pos) {
-    for (const s of FACE_SAMPLES) {
+    // Include the closest surface point: an edge can be in reach even when all
+    // face centres are outside it.
+    const eye = game.player.getEyePosition();
+    const closest = [clamp(eye.x - pos.getX(), 0.001, 0.999),
+      clamp(eye.y - pos.getY(), 0.001, 0.999), clamp(eye.z - pos.getZ(), 0.001, 0.999)];
+    for (const s of FACE_SAMPLES.concat([closest])) {
       const point = { x: pos.getX() + s[0], y: pos.getY() + s[1], z: pos.getZ() + s[2] };
       const hit = cast(game, new T.Vec3(point.x, point.y, point.z));
       if (hits(hit, pos) && inReach(game, hit)) return point;
@@ -53,10 +58,22 @@ function createWorld(T) {
   const cameraRay = game => rayAt(game, { yaw: game.player.getYRot(), pitch: game.player.getXRot() });
 
   // A pickaxe with more than one durability left (the last point is never spent).
-  function holdsPickaxe(player) {
-    const stack = player.getMainHandItem();
+  function usablePickaxe(stack) {
     return !stack.isEmpty() && stack.is(T.ItemTags.PICKAXES) &&
       (!stack.isDamageableItem() || stack.getMaxDamage() - stack.getDamageValue() > 1);
+  }
+
+  const holdsPickaxe = player => usablePickaxe(player.getMainHandItem());
+
+  function selectPickaxe(player) {
+    if (holdsPickaxe(player)) return true;
+    const inventory = player.getInventory();
+    for (let slot = 0; slot < 9; slot++) {
+      if (!usablePickaxe(inventory.getItem(slot))) continue;
+      inventory.setSelectedSlot(slot);
+      return true;
+    }
+    return false;
   }
 
   // Whether the player can walk from `from` to `to` (x/z) on the floor at floorY:
@@ -85,7 +102,7 @@ function createWorld(T) {
     return info ? clamp(info.getLatency(), 0, 2000) : 0;
   }
 
-  return { blockPos, isTarget, cast, hits, inReach, visiblePoint, rayAt, cameraRay, holdsPickaxe, walkable, latency };
+  return { blockPos, isTarget, cast, hits, inReach, visiblePoint, rayAt, cameraRay, holdsPickaxe, selectPickaxe, walkable, latency };
 }
 
 module.exports = { createWorld };

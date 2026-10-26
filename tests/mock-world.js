@@ -82,6 +82,20 @@ function createMockWorld(options) {
   var opts = { pauseOnLostFocus: true };
   ["Up", "Down", "Left", "Right", "Jump", "Shift", "Use", "Attack", "Sprint"].forEach(function (k) { opts["key" + k] = binding(); });
 
+  w.stack = function (pickaxe, remaining) {
+    return {
+      isEmpty: function () { return !pickaxe; }, is: function () { return pickaxe; },
+      isDamageableItem: function () { return true; }, getMaxDamage: function () { return 100; },
+      getDamageValue: function () { return 100 - remaining; },
+    };
+  };
+  w.hotbar = [];
+  w.selectedSlot = 0;
+  var inventory = {
+    getItem: function (slot) { return w.hotbar[slot] || w.stack(slot === 0 && w.hasPickaxe, 90); },
+    setSelectedSlot: function (slot) { w.selectedSlot = slot; },
+  };
+
   var player = {
     x: 0.5, y: 64, z: 0.5, yaw: 0, pitch: 68,
     getX: function () { return this.x; }, getY: function () { return this.y; }, getZ: function () { return this.z; },
@@ -95,12 +109,8 @@ function createMockWorld(options) {
     },
     blockInteractionRange: function () { return 4.5; },
     getBoundingBox: function () { return new Box(this.x - 0.3, this.y, this.z - 0.3, this.x + 0.3, this.y + 1.8, this.z + 0.3); },
-    getMainHandItem: function () {
-      return {
-        isEmpty: function () { return false; }, is: function () { return w.hasPickaxe; },
-        isDamageableItem: function () { return true; }, getMaxDamage: function () { return 100; }, getDamageValue: function () { return 10; },
-      };
-    },
+    getInventory: function () { return inventory; },
+    getMainHandItem: function () { return inventory.getItem(w.selectedSlot); },
     getDestroySpeed: function () { return 8; }, getUUID: function () { return "uuid"; },
     swing: function () {},
     isAlive: function () { return true; }, isPassenger: function () { return false; },
@@ -209,7 +219,7 @@ function createMockWorld(options) {
   // What vanilla's crosshair sees this tick.
   w.updateHit = function () {
     var eye = player.getEyePosition();
-    game.hitResult = level.clip(new Clip(eye, eye.add(player.getViewVector().scale(4.5))));
+    game.hitResult = level.clip(new Clip(eye, eye.add(player.getViewVector().scale(player.blockInteractionRange()))));
   };
 
   // Invariants that must hold whenever the miner holds attack.

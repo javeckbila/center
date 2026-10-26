@@ -12,7 +12,6 @@ const { defer } = require("../../core/defer");
 const draw = require("../../gui/draw");
 const theme = require("../../gui/theme");
 const { createMiner } = require("./miner");
-const { AREA_WIDTH, AREA_DEPTH } = require("./geometry");
 
 const ID = "auto-miner";
 const LEGACY_MODULE = "auto-miner"; // the standalone MVP module this replaces
@@ -210,7 +209,7 @@ module.exports = defineFeature({
   id: ID,
   name: "Auto Miner",
   category: "Automation",
-  description: "Mines reachable cobblestone, iron ore, diamond ore and ancient debris in a 5x5x5 area around you.",
+  description: "Mines all visible, reachable cobblestone, iron ore, diamond ore and ancient debris; selects a hotbar pickaxe automatically.",
   persistEnabled: false, // a macro must never resume by itself after a reload
   settings: [
     {
@@ -251,8 +250,7 @@ module.exports = defineFeature({
       now: () => Clock.nanoTime() / 1e9,
       inGui: () => Client.isInGui(),
       glide: () => f.get("glide"),
-      onStart: () => say("&aOn. Mining cobblestone, iron ore, diamond ore and ancient debris in the " + AREA_WIDTH + "x" + AREA_DEPTH + "x" + AREA_WIDTH +
-        " area around you; your footing is kept."),
+      onStart: () => say("&aOn. Mining all reachable cobblestone, iron ore, diamond ore and ancient debris; your footing is kept."),
       onHalt: (reason, opts) => onHalt(f, reason, opts),
     });
 

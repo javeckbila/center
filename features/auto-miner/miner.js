@@ -1,5 +1,5 @@
-// Auto miner core. Stationary mining of reachable target blocks in a 5x5x5 area
-// around the start position, with smooth camera motion ("ping glide") and a
+// Auto miner core. Stationary mining of all reachable target blocks with
+// smooth camera motion ("ping glide") and a
 // walk-home controller when the player is pushed.
 //
 // Vanilla does the mining: the miner only aims the camera and holds the attack
@@ -76,6 +76,8 @@ function createMiner(deps) {
   let lastInput = "no mining tick observed";
   const movementOwned = new Set();
   const cooldowns = new Map();
+  const minedOrder = new Map();
+  const awaitingReset = new Map();
   const startup = { needed: true, lastAttempt: -Infinity, attempts: 0, result: "not attempted" };
   const packets = { start: 0, abort: 0, stop: 0 };
 
@@ -149,8 +151,8 @@ function createMiner(deps) {
 
   function refusalReason(game) {
     if (!canRun(game) || !game.player.onGround()) return "Stand still on solid ground, close screens, and release movement keys first.";
-    if (!W.holdsPickaxe(game.player)) return "Hold a pickaxe with at least 2 durability remaining.";
     if (game.options.keyAttack.isDown()) return "Release your attack key first.";
+    if (!W.selectPickaxe(game.player)) return "Put a pickaxe with at least 2 durability remaining in your hotbar.";
     return null;
   }
 
@@ -190,14 +192,15 @@ function createMiner(deps) {
     if (refusal) return halt(refusal, { refused: true });
     const p = game.player;
     const time = now();
-    const region = G.cube(p.getX(), p.getY(), p.getZ());
-    anchor = { x: p.getX(), y: p.getY(), z: p.getZ(), blocks: region.blocks,
-      supportY: region.supportY, idleYaw: p.getYRot() };
+    anchor = { x: p.getX(), y: p.getY(), z: p.getZ(),
+      supportY: Math.floor(p.getY() - 0.01), idleYaw: p.getYRot() };
     yaw.value = p.getYRot(); yaw.velocity = 0;
     pitch.value = p.getXRot(); pitch.velocity = 0;
     target = null;
     nextTarget = null;
     cooldowns.clear();
+    minedOrder.clear();
+    awaitingReset.clear();
     cleared = 0;
     expectedTicks = 0;
     toolSpeed = 0;
@@ -224,30 +227,36 @@ function createMiner(deps) {
 
   // ---------- targets ----------
   //
-  // Choose the closest visible, reachable block centre to the player's eyes.
-  // Equal distances keep scan order, so selection is deterministic. Only the
-  // short completion/retry cooldown can temporarily exclude a nearby block.
+  // Unmined positions first, then least recently mined. Within that group,
+  // prefer a short camera turn with a small distance cost. Regenerating nearby
+  // blocks cannot starve the rest of the reachable field.
 
   function findTarget(game, time, excluded) {
     const box = game.player.getBoundingBox();
     const eye = vector(game.player.getEyePosition());
-    let picked = null;
-    let nearest = Infinity;
-    for (const block of anchor.blocks) {
+    const candidates = [];
+    for (const block of G.reachBlocks(eye, game.player.blockInteractionRange())) {
       if (G.supportsFeet(block, anchor.supportY, box)) continue;
       const id = blockKey(block);
-      if (id === excluded || (cooldowns.get(id) || 0) > time) continue;
       const pos = W.blockPos(block.x, block.y, block.z);
-      if (!W.isTarget(game, pos)) continue;
+      const eligible = W.isTarget(game, pos);
+      // A completion packet can precede the server's replacement. Wait until
+      // that intermediate block is seen; the deadline handles missed updates.
+      if (!eligible) awaitingReset.delete(id);
+      if (!eligible || id === excluded || (cooldowns.get(id) || 0) > time || (awaitingReset.get(id) || 0) > time) continue;
       const dx = block.x + 0.5 - eye.x;
       const dy = block.y + 0.5 - eye.y;
       const dz = block.z + 0.5 - eye.z;
       const distance = dx * dx + dy * dy + dz * dz;
-      if (distance >= nearest) continue;
-      const point = W.visiblePoint(game, pos);
-      if (!point) continue;
-      nearest = distance;
-      picked = { pos, point, id };
+      const look = G.angles(eye, { x: block.x + 0.5, y: block.y + 0.5, z: block.z + 0.5 });
+      const turn = G.hypot(G.wrap(look.yaw - yaw.value), look.pitch - pitch.value);
+      candidates.push({ pos, id, order: minedOrder.get(id) || 0, score: turn + Math.sqrt(distance) * 4 });
+    }
+    candidates.sort((a, b) => a.order - b.order || a.score - b.score || a.id.localeCompare(b.id));
+    let picked = null;
+    for (const candidate of candidates) {
+      const point = W.visiblePoint(game, candidate.pos);
+      if (point) { picked = { pos: candidate.pos, id: candidate.id, point }; break; }
     }
     if (!picked) return null;
     return {
@@ -257,7 +266,7 @@ function createMiner(deps) {
   }
 
   function selectTarget(game, time) {
-    // Rescan at handoff: the completed break may have exposed a nearer block.
+    // Rescan at handoff: the completed break may have exposed another block.
     target = findTarget(game, time, null);
     nextTarget = null;
     nextPlan = 0;
@@ -271,6 +280,8 @@ function createMiner(deps) {
     if (target) {
       if (completed) {
         cleared++;
+        minedOrder.set(target.id, cleared);
+        if (W.isTarget(game, target.pos)) awaitingReset.set(target.id, time + 2 + pingMs / 1000);
       }
       cooldowns.set(target.id, time + (completed ? Math.max(0.05, pingMs / 1000 + 0.05) : RETRY_COOLDOWN));
     }
@@ -364,7 +375,13 @@ function createMiner(deps) {
 
   function runTick(game) {
     if (!canRun(game)) return halt("Manual input, screen, or player state changed");
-    if (!W.holdsPickaxe(game.player)) return halt("Pickaxe missing or nearly broken");
+    if (!W.holdsPickaxe(game.player)) {
+      releaseAttack(game);
+      if (!W.selectPickaxe(game.player)) return halt("No usable pickaxe in hotbar");
+      startup.needed = true;
+      startup.lastAttempt = -Infinity;
+      if (target) { target.started = false; target.lastStage = -1; target.lastProgress = now(); }
+    }
     const time = now();
     if (rec || displaced(game.player) || !game.player.onGround()) return walkHome(game, time);
     updatePing(game, time);
@@ -442,6 +459,7 @@ function createMiner(deps) {
     if (phase !== "running") return;
     const game = deps.game();
     if (!canRun(game)) return halt("Manual input, screen, or player state changed");
+    if (!W.holdsPickaxe(game.player)) releaseAttack(game);
     const time = now();
     if (!rec && (displaced(game.player) || !game.player.onGround())) beginReturn(game, time);
     if (rec) {

@@ -1,8 +1,6 @@
 // Pure math for the auto miner: angles, the mining area, camera spring and
 // mining-time estimates. No Minecraft or CT access, so it is unit-tested directly.
 
-const AREA_WIDTH = 5; // blocks on X and Z
-const AREA_DEPTH = 5; // vertical layers around the player
 const MAX_LEAD_TICKS = 6;
 
 const clamp = (n, low, high) => Math.max(low, Math.min(high, n));
@@ -22,21 +20,21 @@ function angles(eye, point) {
   };
 }
 
-// The mining area: an AREA_WIDTH-wide square centred on the player's block.
-// The Y layers cover the floor, feet, head,
-// and two overhead layers instead of extending entirely below the player.
-function cube(x, y, z) {
-  const minX = Math.floor(x - (AREA_WIDTH - 1) / 2);
-  const minZ = Math.floor(z - (AREA_WIDTH - 1) / 2);
-  const supportY = Math.floor(y - 0.01);
-  const topY = supportY + AREA_DEPTH - 1;
+// Broad phase: every block whose unit box intersects the eye's reach sphere.
+// Visibility and distance to the actual ray hit are checked in world.js.
+function reachBlocks(eye, range) {
   const blocks = [];
-  for (let depth = 0; depth < AREA_DEPTH; depth++) {
-    for (let dx = 0; dx < AREA_WIDTH; dx++) {
-      for (let dz = 0; dz < AREA_WIDTH; dz++) blocks.push({ x: minX + dx, y: topY - depth, z: minZ + dz });
+  for (let x = Math.floor(eye.x - range); x <= Math.floor(eye.x + range); x++) {
+    for (let y = Math.floor(eye.y - range); y <= Math.floor(eye.y + range); y++) {
+      for (let z = Math.floor(eye.z - range); z <= Math.floor(eye.z + range); z++) {
+        const dx = eye.x - clamp(eye.x, x, x + 1);
+        const dy = eye.y - clamp(eye.y, y, y + 1);
+        const dz = eye.z - clamp(eye.z, z, z + 1);
+        if (dx * dx + dy * dy + dz * dz <= range * range) blocks.push({ x, y, z });
+      }
     }
   }
-  return { blocks, topY, supportY };
+  return blocks;
 }
 
 // True for floor blocks under the player's collision box (never mined).
@@ -78,5 +76,5 @@ function glideWeight(stage, progressPerTick, pingMs) {
 }
 
 module.exports = {
-  AREA_WIDTH, AREA_DEPTH, clamp, wrap, hypot, angles, cube, supportsFeet, spring, miningTicks, leadTicks, glideWeight,
+  clamp, wrap, hypot, angles, reachBlocks, supportsFeet, spring, miningTicks, leadTicks, glideWeight,
 };
