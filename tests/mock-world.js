@@ -62,10 +62,14 @@ function createMockWorld(options) {
     clock: 1, gui: false, focused: true, grabbed: options.mouseGrabbed !== false, grabs: 0, grounded: true,
     hasPickaxe: true, progress: options.progress || 0.2, latency: options.ping === undefined ? 120 : options.ping,
     blocks: new Map(), cobble: { name: "cobblestone" }, stone: { name: "stone" },
+    iron: { name: "iron_ore" }, deepslateIron: { name: "deepslate_iron_ore" },
+    diamond: { name: "diamond_ore" }, deepslateDiamond: { name: "deepslate_diamond_ore" },
+    debris: { name: "ancient_debris" },
     completed: [], packets: [], aborts: [], nativeStarts: [],
     // Receives every ServerboundPlayerActionPacket "sent" by the simulated client.
     packetSink: function () {},
   };
+  var targetBlocks = [w.cobble, w.iron, w.deepslateIron, w.diamond, w.deepslateDiamond, w.debris];
   var BLOCK = { name: "BLOCK" };
   var MISS = { name: "MISS" };
   var actions = { START_DESTROY_BLOCK: { name: "START" }, STOP_DESTROY_BLOCK: { name: "STOP" }, ABORT_DESTROY_BLOCK: { name: "ABORT" } };
@@ -158,7 +162,7 @@ function createMockWorld(options) {
       isDestroying: function () { return mining !== null; },
       getDestroyStage: function () { return mining && mining.progress > 0 ? Math.floor(mining.progress * 10) : -1; },
       startDestroyBlock: function (pos, direction) {
-        if (w.blocks.get(blockId(pos)) !== w.cobble) fail("native start on a non-target block " + blockId(pos));
+        if (targetBlocks.indexOf(w.blocks.get(blockId(pos))) < 0) fail("native start on a non-target block " + blockId(pos));
         if (blockId(pos) !== blockId(game.hitResult.getBlockPos())) fail("native start must match the crosshair");
         if (direction !== "UP") fail("unexpected face " + direction);
         w.nativeStarts.push({ pos: pos, time: w.clock });
@@ -184,7 +188,10 @@ function createMockWorld(options) {
   w.actions = actions;
   w.T = {
     BlockPos: Pos, Vec3: Vec, ClipContext: Clip, ClipBlock: { OUTLINE: 1 }, ClipFluid: { NONE: 1 },
-    HitType: { BLOCK: BLOCK }, Blocks: { COBBLESTONE: w.cobble }, ItemTags: { PICKAXES: 1 },
+    HitType: { BLOCK: BLOCK }, Blocks: {
+      COBBLESTONE: w.cobble, IRON_ORE: w.iron, DEEPSLATE_IRON_ORE: w.deepslateIron,
+      DIAMOND_ORE: w.diamond, DEEPSLATE_DIAMOND_ORE: w.deepslateDiamond, ANCIENT_DEBRIS: w.debris,
+    }, ItemTags: { PICKAXES: 1 },
     PlayerActionPacket: ActionPacket, PlayerAction: actions, InteractionHand: { MAIN_HAND: "MAIN_HAND" },
   };
   w.typeByName = {};
@@ -210,7 +217,7 @@ function createMockWorld(options) {
     if (!opts.keyAttack.down) return;
     if (game.hitResult.getType() !== BLOCK) fail("attack held while looking at air");
     var id = blockId(game.hitResult.getBlockPos());
-    if (w.blocks.get(id) !== w.cobble) fail("attack held on a non-cobblestone block " + id);
+    if (targetBlocks.indexOf(w.blocks.get(id)) < 0) fail("attack held on a non-target block " + id);
     if (id === "0,63,0") fail("attack held on the support block");
   };
 

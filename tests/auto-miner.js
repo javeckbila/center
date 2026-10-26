@@ -17,7 +17,7 @@ function seeded(seed) {
   return function () { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
 }
 
-// Whole top layer of the area (x/z -1..2 around a player at 0.5, 0.5) as cobblestone.
+// Whole floor layer of the area (x/z -1..2 around a player at 0.5, 0.5) as cobblestone.
 function fillTopLayer(h) {
   for (var x = -1; x <= 2; x++) for (var z = -1; z <= 2; z++) h.w.blocks.set(x + ",63," + z, h.w.cobble);
 }
@@ -69,12 +69,19 @@ function harness(options) {
 
 // ---------- pure helpers ----------
 
-test("mining area has 64 unique blocks below positive and negative positions", function () {
+test("mining area covers four layers around positive and negative positions", function () {
   [[0.5, 64, 0.5], [-15.8, -12, -21.3]].forEach(function (c) {
     var region = GEO.cube(c[0], c[1], c[2]);
     eq(region.blocks.length, 64);
     eq(new Set(region.blocks.map(function (p) { return p.x + "," + p.y + "," + p.z; })).size, 64);
-    ok(region.blocks.every(function (p) { return p.y < c[1] && p.y >= c[1] - 4; }));
+    var floorY = Math.floor(c[1] - 0.01);
+    eq(region.supportY, floorY);
+    eq(region.topY, floorY + 3);
+    eq(new Set(region.blocks.map(function (p) { return p.x; })).size, 4);
+    eq(new Set(region.blocks.map(function (p) { return p.z; })).size, 4);
+    for (var y = floorY; y <= floorY + 3; y++) {
+      eq(region.blocks.filter(function (p) { return p.y === y; }).length, 16, "full layer at " + y);
+    }
   });
 });
 
@@ -166,7 +173,7 @@ test("idle glide stays finite and keeps moving without targets", function () {
   h.run(10);
   ok(h.w.player.yaw !== previous, "camera drifts");
   eq(h.opts.keyAttack.down, false);
-  eq(h.s().status, "Waiting for reachable cobblestone");
+  eq(h.s().status, "Waiting for reachable blocks");
 });
 
 // ---------- starting a break ----------
@@ -229,6 +236,35 @@ test("background mining never grabs another application's mouse", function () {
 
 // ---------- targeting ----------
 
+test("every supported material is mined at floor, feet, head and overhead height", function () {
+  ["cobble", "iron", "deepslateIron", "diamond", "deepslateDiamond", "debris"].forEach(function (material) {
+    [63, 64, 65, 66].forEach(function (y) {
+      var h = harness({ simulateMining: true });
+      var id = "0," + y + ",1";
+      h.w.blocks.set("0,63,0", h.w[material]);
+      h.w.blocks.set(id, h.w[material]);
+      ok(h.begin());
+      h.run(200, function () { return h.w.completed.length > 0; });
+      eq(h.w.completed.length, 1, material + " at " + y);
+      eq(h.w.completed[0].id, id);
+      eq(h.w.blocks.get("0,63,0"), h.w[material], "support kept");
+    });
+  });
+});
+
+test("air, other materials and targets outside the cube are ignored", function () {
+  var h = harness({ simulateMining: true });
+  h.w.blocks.set("0,64,1", h.w.stone);
+  h.w.blocks.set("0,67,1", h.w.diamond);
+  h.w.blocks.set("0,62,1", h.w.iron);
+  h.w.blocks.set("3,65,0", h.w.debris);
+  ok(h.begin());
+  h.run(100);
+  eq(h.s().target, null);
+  eq(h.w.completed.length, 0);
+  eq(h.opts.keyAttack.down, false);
+});
+
 test("mines selected cobblestone, preserves support, and uses current tool timing", function () {
   var h = harness();
   h.w.blocks.set("0,63,0", h.w.cobble);
@@ -273,14 +309,14 @@ test("a replacement block is skipped on the next frame without a timeout", funct
 test("a newly occluded target is replaced in the same tick", function () {
   var h = harness();
   h.w.blocks.set("0,63,0", h.w.stone);
-  h.w.blocks.set("0,62,1", h.w.cobble);
+  h.w.blocks.set("0,65,2", h.w.cobble);
   ok(h.begin());
   h.cycle();
-  eq(h.s().target, "0,62,1");
-  h.w.blocks.set("0,63,1", h.w.stone);
-  h.w.blocks.set("1,63,1", h.w.cobble);
+  eq(h.s().target, "0,65,2");
+  h.w.blocks.set("0,65,1", h.w.stone);
+  h.w.blocks.set("1,65,1", h.w.cobble);
   h.miner.tick();
-  eq(h.s().target, "1,63,1");
+  eq(h.s().target, "1,65,1");
 });
 
 test("the completion packet hands off before the delayed replacement arrives", function () {

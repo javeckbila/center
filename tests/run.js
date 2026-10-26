@@ -571,11 +571,11 @@ test("/am from chat arms, starts once chat closes, and draws its HUD", function 
   ok(overlayTexts().indexOf("Starts when this screen closes") >= 0, "HUD explains the wait");
   currentScreen = null;
   ticks(2);
-  ok(chatHas("On. Mining reachable cobblestone"), "started");
+  ok(chatHas("On. Mining cobblestone, iron ore, diamond ore and ancient debris"), "started");
   eq(mc.options.pauseOnLostFocus, false, "focus pause disabled while running");
   ticks(1); // first scan: nothing to mine in the mock world yet
   var texts = overlayTexts();
-  ok(texts.indexOf("Auto Miner") >= 0 && texts.indexOf("Waiting for reachable cobblestone") >= 0, "HUD drawn: " + texts.join(", "));
+  ok(texts.indexOf("Auto Miner") >= 0 && texts.indexOf("Waiting for reachable blocks") >= 0, "HUD drawn: " + texts.join(", "));
   ok(texts.indexOf("Cleared") >= 0, "details shown");
 });
 

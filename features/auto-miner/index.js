@@ -210,7 +210,7 @@ module.exports = defineFeature({
   id: ID,
   name: "Auto Miner",
   category: "Automation",
-  description: "Mines reachable cobblestone below you with smooth, ping-aware aim.",
+  description: "Mines cobblestone, iron ore, diamond ore and ancient debris in a 4x4x4 area around you.",
   persistEnabled: false, // a macro must never resume by itself after a reload
   settings: [
     {
@@ -258,8 +258,8 @@ module.exports = defineFeature({
       inGui: () => Client.isInGui(),
       glide: () => f.get("glide"),
       randomness: () => f.get("randomness"),
-      onStart: () => say("&aOn. Mining reachable cobblestone in the " + AREA_WIDTH + "x" + AREA_DEPTH + "x" + AREA_WIDTH +
-        " area below you; your footing is kept."),
+      onStart: () => say("&aOn. Mining cobblestone, iron ore, diamond ore and ancient debris in the " + AREA_WIDTH + "x" + AREA_DEPTH + "x" + AREA_WIDTH +
+        " area around you; your footing is kept."),
       onHalt: (reason, opts) => onHalt(f, reason, opts),
     });
 

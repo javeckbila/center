@@ -2,7 +2,7 @@
 // mining-time estimates. No Minecraft or CT access, so it is unit-tested directly.
 
 const AREA_WIDTH = 4; // blocks on X and Z
-const AREA_DEPTH = 4; // layers below the feet
+const AREA_DEPTH = 4; // vertical layers around the player
 const MAX_LEAD_TICKS = 6;
 
 const clamp = (n, low, high) => Math.max(low, Math.min(high, n));
@@ -23,23 +23,25 @@ function angles(eye, point) {
 }
 
 // The mining area: an AREA_WIDTH-wide square centred as closely as an even
-// width allows on the player, AREA_DEPTH layers deep starting under the feet.
+// width allows on the player. The four Y layers cover the floor, feet, head,
+// and overhead blocks instead of extending entirely below the player.
 function cube(x, y, z) {
   const minX = Math.floor(x - (AREA_WIDTH - 1) / 2);
   const minZ = Math.floor(z - (AREA_WIDTH - 1) / 2);
-  const topY = Math.floor(y - 0.01);
+  const supportY = Math.floor(y - 0.01);
+  const topY = supportY + AREA_DEPTH - 1;
   const blocks = [];
   for (let depth = 0; depth < AREA_DEPTH; depth++) {
     for (let dx = 0; dx < AREA_WIDTH; dx++) {
       for (let dz = 0; dz < AREA_WIDTH; dz++) blocks.push({ x: minX + dx, y: topY - depth, z: minZ + dz });
     }
   }
-  return { blocks, topY };
+  return { blocks, topY, supportY };
 }
 
-// True for top-layer blocks under the player's collision box (never mined).
-function supportsFeet(pos, topY, box) {
-  return pos.y === topY && pos.x + 1 > box.minX + 0.001 && pos.x < box.maxX - 0.001 &&
+// True for floor blocks under the player's collision box (never mined).
+function supportsFeet(pos, supportY, box) {
+  return pos.y === supportY && pos.x + 1 > box.minX + 0.001 && pos.x < box.maxX - 0.001 &&
     pos.z + 1 > box.minZ + 0.001 && pos.z < box.maxZ - 0.001;
 }
 

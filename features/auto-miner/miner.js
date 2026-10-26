@@ -1,5 +1,5 @@
-// Auto miner core. Stationary mining of reachable cobblestone in a 4x4x4 area
-// under the start position, with smooth camera motion ("ping glide") and a
+// Auto miner core. Stationary mining of reachable target blocks in a 4x4x4 area
+// around the start position, with smooth camera motion ("ping glide") and a
 // walk-home controller when the player is pushed.
 //
 // Vanilla does the mining: the miner only aims the camera and holds the attack
@@ -203,7 +203,8 @@ function createMiner(deps) {
     const p = game.player;
     const time = now();
     const region = G.cube(p.getX(), p.getY(), p.getZ());
-    anchor = { x: p.getX(), y: p.getY(), z: p.getZ(), blocks: region.blocks, topY: region.topY, idleYaw: p.getYRot() };
+    anchor = { x: p.getX(), y: p.getY(), z: p.getZ(), blocks: region.blocks, topY: region.topY,
+      supportY: region.supportY, idleYaw: p.getYRot() };
     yaw.value = p.getYRot(); yaw.velocity = 0;
     pitch.value = p.getXRot(); pitch.velocity = 0;
     target = null;
@@ -270,7 +271,7 @@ function createMiner(deps) {
     const reference = target ? G.angles(eye, target.point) : { yaw: yaw.value, pitch: pitch.value };
     const candidates = [];
     for (const block of anchor.blocks) {
-      if (G.supportsFeet(block, anchor.topY, box)) continue;
+      if (G.supportsFeet(block, anchor.supportY, box)) continue;
       const id = blockKey(block);
       if (id === excluded || (cooldowns.get(id) || 0) > time) continue;
       const pos = W.blockPos(block.x, block.y, block.z);
@@ -313,7 +314,7 @@ function createMiner(deps) {
     nextPlan = 0;
     stage = -1;
     if (target) setStatus("gliding", "Gliding");
-    else setStatus("waiting", "Waiting for reachable cobblestone");
+    else setStatus("waiting", "Waiting for reachable blocks");
     nextScan = time + SCAN_INTERVAL;
   }
 

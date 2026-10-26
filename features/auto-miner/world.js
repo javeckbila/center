@@ -12,8 +12,14 @@ const WALK_SAMPLE = 0.15; // blocks between collision samples along a walk segme
 function createWorld(T) {
   const blockPos = (x, y, z) => new T.BlockPos(x, y, z);
 
-  // The only block type the miner breaks.
-  const isTarget = (game, pos) => game.level.getBlockState(pos).is(T.Blocks.COBBLESTONE);
+  const targetBlocks = [
+    T.Blocks.COBBLESTONE, T.Blocks.IRON_ORE, T.Blocks.DEEPSLATE_IRON_ORE,
+    T.Blocks.DIAMOND_ORE, T.Blocks.DEEPSLATE_DIAMOND_ORE, T.Blocks.ANCIENT_DEBRIS,
+  ];
+  function isTarget(game, pos) {
+    const state = game.level.getBlockState(pos);
+    return targetBlocks.some(block => state.is(block));
+  }
 
   function cast(game, end) {
     return game.level.clip(new T.ClipContext(game.player.getEyePosition(), end, T.ClipBlock.OUTLINE, T.ClipFluid.NONE, game.player));
