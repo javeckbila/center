@@ -4,34 +4,60 @@ const { clamp, length } = require("./geometry");
 function createWorld(T) {
   const cropName = state => String(T.BuiltInRegistries.BLOCK.getKey(state.getBlock()));
   function survey(game, expectedCrop) {
-    const level = game.level, player = game.player, cache = new Map(), edges = new Map();
+    const level = game.level, player = game.player, cache = new Map(), edges = new Map(), chunks = new Map();
     let missing = false;
+    // Every query below is a Java call from Rhino, so the scan keeps them to a
+    // minimum: cached chunk checks, one crop-state read and one floor read per
+    // tile, and one swept collision box per edge segment.
     const loaded = (x, z) => {
-      if (level.hasChunk(Math.floor(x / 16), Math.floor(z / 16))) return true;
-      missing = true; return false;
+      const cx = Math.floor(x / 16), cz = Math.floor(z / 16), id = cx * 4194304 + cz;
+      let value = chunks.get(id);
+      if (value === undefined) { value = !!level.hasChunk(cx, cz); chunks.set(id, value); }
+      if (!value) missing = true;
+      return value;
     };
     function block(x, y, z) { return level.getBlockState(new T.BlockPos(x, y, z)); }
     const px = Math.floor(player.getX()), pz = Math.floor(player.getZ()), py = Math.floor(player.getY() + 0.1);
-    let crop = expectedCrop || null;
+    let crop = expectedCrop || null, cropBlock = null;
     if (!crop && loaded(px, pz)) {
       const state = block(px, py, pz), name = cropName(state);
       if (state.getBlock() instanceof T.CropBlock || ["minecraft:nether_wart", "minecraft:sugar_cane",
-        "minecraft:melon_stem", "minecraft:pumpkin_stem", "minecraft:torchflower"].indexOf(name) >= 0) crop = name;
+        "minecraft:melon_stem", "minecraft:pumpkin_stem", "minecraft:torchflower"].indexOf(name) >= 0) {
+        crop = name; cropBlock = state.getBlock();
+      }
     }
-    function box(x, y, z) { return new T.AABB(x - 0.32, y + 0.001, z - 0.32, x + 0.32, y + 1.82, z + 0.32); }
-    function clear(x, y, z) { return level.noCollision(player, box(x, y, z)); }
+    // Air is by far the most common miss; identity avoids a registry lookup
+    // and string conversion for every crop once the crop block is known.
+    function isTargetCrop(state) {
+      if (state.isAir && state.isAir()) return false;
+      const b = state.getBlock();
+      if (cropBlock !== null && b === cropBlock) return true;
+      if (cropName(state) !== crop) return false;
+      cropBlock = b; return true;
+    }
+    // Entity and world-border checks are irrelevant for terrain mapping.
+    const noCollision = level.noBlockCollision ? b => level.noBlockCollision(player, b) : b => level.noCollision(player, b);
+    // Player box swept over [x1, x2] x [y1, y2 + height] x [z1, z2] (feet centers).
+    function sweptClear(x1, z1, x2, z2, y1, y2) {
+      return noCollision(new T.AABB(Math.min(x1, x2) - 0.32, y1 + 0.001, Math.min(z1, z2) - 0.32,
+        Math.max(x1, x2) + 0.32, y2 + 1.82, Math.max(z1, z2) + 0.32));
+    }
     function tile(x, cy, z) {
       const id = x + "," + cy + "," + z;
-      if (cache.has(id)) return cache.get(id);
+      const known = cache.get(id);
+      if (known !== undefined) return known;
       let value = null;
-      if (crop && loaded(x, z) && cropName(block(x, cy, z)) === crop) {
-        const pos = new T.BlockPos(x, cy - 1, z), floor = level.getBlockState(pos);
-        const shape = floor.getCollisionShape(level, pos);
-        if (floor.getFluidState().isEmpty() && block(x, cy, z).getFluidState().isEmpty() && !shape.isEmpty()) {
-          const bounds = shape.bounds(), y = cy - 1 + bounds.maxY;
-          // Full soil surface, rather than fences, walls or partial ledges.
-          if (bounds.minX <= 0.18 && bounds.maxX >= 0.82 && bounds.minZ <= 0.18 && bounds.maxZ >= 0.82 &&
-              bounds.maxY <= 1 && clear(x + 0.5, y, z + 0.5)) value = { x, cy, z, y };
+      if (crop && loaded(x, z)) {
+        const state = block(x, cy, z);
+        if (isTargetCrop(state) && state.getFluidState().isEmpty()) {
+          const pos = new T.BlockPos(x, cy - 1, z), floor = level.getBlockState(pos);
+          const shape = floor.getCollisionShape(level, pos);
+          if (floor.getFluidState().isEmpty() && !shape.isEmpty()) {
+            const bounds = shape.bounds(), y = cy - 1 + bounds.maxY;
+            // Full soil surface, rather than fences, walls or partial ledges.
+            if (bounds.minX <= 0.18 && bounds.maxX >= 0.82 && bounds.minZ <= 0.18 && bounds.maxZ >= 0.82 &&
+                bounds.maxY <= 1 && sweptClear(x + 0.5, z + 0.5, x + 0.5, z + 0.5, y, y)) value = { x, cy, z, y };
+          }
         }
       }
       cache.set(id, value); return value;
@@ -40,18 +66,16 @@ function createWorld(T) {
       if (Math.abs(a.x - b.x) + Math.abs(a.z - b.z) !== 1 || Math.abs(a.y - b.y) > 1.001) return false;
       const aid = a.x + "," + a.cy + "," + a.z, bid = b.x + "," + b.cy + "," + b.z;
       const id = aid < bid ? aid + ":" + bid : bid + ":" + aid;
-      if (edges.has(id)) return edges.get(id);
+      const known = edges.get(id);
+      if (known !== undefined) return known;
       const raised = Math.abs(a.y - b.y) > 0.1;
       const height = Math.max(a.y, b.y) + (raised ? 0.26 : 0);
-      let safe = true;
-      // Check the whole jump envelope, including takeoff and landing. Only
-      // reversible edges are admitted, so closing cannot require a deep drop.
-      for (let s = 0; s <= 8 && safe; s++) {
-        const t = s / 8;
-        safe = clear(a.x + 0.5 + (b.x - a.x) * t, height, a.z + 0.5 + (b.z - a.z) * t);
-        if (raised) safe = safe && clear(a.x + 0.5, a.y + (height - a.y) * t, a.z + 0.5) &&
-          clear(b.x + 0.5, b.y + (height - b.y) * t, b.z + 0.5);
-      }
+      const ax = a.x + 0.5, az = a.z + 0.5, bx = b.x + 0.5, bz = b.z + 0.5;
+      // The whole jump envelope as continuous swept boxes: the horizontal run
+      // at jump height, plus takeoff and landing columns. Only reversible
+      // edges are admitted, so closing cannot require a deep drop.
+      const safe = sweptClear(ax, az, bx, bz, height, height) &&
+        (!raised || sweptClear(ax, az, ax, az, a.y, height) && sweptClear(bx, bz, bx, bz, b.y, height));
       edges.set(id, safe); return safe;
     }
     return { crop, seed: tile(px, py, pz), tile, edge, unloaded: () => missing };

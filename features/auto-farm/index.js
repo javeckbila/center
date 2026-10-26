@@ -19,6 +19,8 @@ const ID = "auto-farm";
 const PREFIX = "&8[&bAuto Farm&8]&r ";
 const SUBCOMMANDS = ["generate", "add", "remove", "clear", "start", "stop", "toggle", "status", "list", "save", "load", "configs", "delete", "help"];
 const Clock = Java.type("java.lang.System");
+// Route generation runs on the main thread in slices of about 8 ms per tick.
+const GENERATION_MS = 8, GENERATION_WORK = 1000000;
 const say = text => ChatLib.chat(PREFIX + text);
 // Older versions stored the time for a full cycle; the menu now describes a
 // single side-to-side pass. Preserve explicit saved timing in the new units.
@@ -270,8 +272,11 @@ module.exports = registry.defineFeature({
         if (!World.isLoaded() || game.player !== generation.player || game.level !== generation.level || context() !== generation.context) {
           generation = null; say("&eGeneration canceled: world changed. Previous route kept."); return;
         }
-        const state = generation.job.step(64, 6);
-        generationStatus = (state.phase === "scan" ? "Scanning crops: " : "Building crop loop: ") + state.count + " tiles";
+        // Bounded by time, not item count: cheap planning work used to be
+        // throttled to 64 items per tick even when the slice had time left.
+        const state = generation.job.step(GENERATION_WORK, GENERATION_MS);
+        generationStatus = state.phase === "scan" ? "Scanning crops: " + state.count + " tiles" :
+          "Building crop loop: " + Math.floor(Math.min(1, state.progress || 0) * 100) + "% of " + state.count + " tiles";
         if (state.error) { generation = null; say("&e" + state.error); }
         else if (state.result) {
           const error = route.replace(state.result);

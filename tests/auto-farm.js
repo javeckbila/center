@@ -719,4 +719,57 @@ test("a bed with only two adjacent inset tiles is rejected without saving a tiny
   ok(result.error.indexOf("tiny") >= 0 && result.error.indexOf("Previous route kept") >= 0, result.error);
 });
 
+function laneCoordinates(points, axis, minimum) {
+  // Coordinates of long legs running along the other axis.
+  var lanes = [];
+  points.forEach((a, i) => {
+    var b = points[(i + 1) % points.length], other = axis === "x" ? "z" : "x";
+    if (a[axis] === b[axis] && Math.abs(a[other] - b[other]) >= minimum && lanes.indexOf(a[axis]) < 0) lanes.push(a[axis]);
+  });
+  return lanes.sort((a, b) => a - b);
+}
+
+test("narrow beds use spaced passes instead of zigzagging through every adjacent row", function () {
+  var w = MOCKF.createFarmWorld({}); w.player.y = 63.9375;
+  for (var x = 0; x < 8; x++) for (var z = 0; z < 14; z++) plant(w, x, 64, z);
+  var result = generate(w); checkLoop(w, result, 112);
+  eq(result.result.points.length, 4, "one rectangle: out on one pass, back on the other");
+  eq(laneCoordinates(result.result.points, "x", 5).join(","), "2.5,5.5");
+});
+
+test("separate arms each get their own passes and the loop closes along the shared headland", function () {
+  var w = MOCKF.createFarmWorld({}); w.player.y = 63.9375;
+  for (var x = 0; x < 30; x++) for (var z = 0; z < 8; z++) plant(w, x, 64, z);
+  for (var x = 0; x < 8; x++) for (var z = 8; z < 30; z++) { plant(w, x, 64, z); plant(w, x + 22, 64, z); }
+  var result = generate(w); checkLoop(w, result);
+  var lanes = laneCoordinates(result.result.points, "x", 20);
+  eq(lanes.join(","), "2.5,5.5,24.5,27.5", "two spaced passes per arm, none bunched together");
+  eq(result.result.points.length, 8);
+});
+
+test("passes avoid rows broken by an obstacle instead of doubling up beside it", function () {
+  var w = MOCKF.createFarmWorld({}); w.player.y = 63.9375;
+  for (var x = 0; x < 20; x++) for (var z = 0; z < 30; z++) if (x !== 9 || z !== 6) plant(w, x, 64, z);
+  for (var y = 63; y <= 67; y++) w.blocks.set("9," + y + ",6", w.stone);
+  var result = generate(w); checkLoop(w, result);
+  var lanes = laneCoordinates(result.result.points, "x", 20);
+  eq(lanes.length, 6, "six full-length passes: " + lanes.join(","));
+  for (var i = 1; i < lanes.length; i++) ok(lanes[i] - lanes[i - 1] >= 2, "no adjacent duplicate passes: " + lanes.join(","));
+  eq(result.result.points.length, 12, "no detour bends");
+});
+
+test("crop scanning uses one swept collision query per tile and edge", function () {
+  var w = MOCKF.createFarmWorld({}); w.player.y = 63.9375;
+  for (var x = 0; x < 40; x++) for (var z = 0; z < 40; z++) plant(w, x, 64 + (z >= 20 ? 1 : 0), z);
+  var queries = 0, original = w.game.level.noCollision;
+  w.game.level.noBlockCollision = function (entity, box) { queries++; return original(entity, box); };
+  w.game.level.noCollision = function () { throw new Error("terrain mapping must skip entity collision checks"); };
+  var reader = FARM_WORLD.createWorld(w.T).survey(w.game);
+  var job = GENERATOR.createGenerator(reader, "farm"), state, calls = 0;
+  do { state = job.step(1000000, 0); calls++; } while (!state.result && !state.error && calls < 10);
+  ok(state.result, state.error); eq(calls, 1, "an unbounded slice finishes in one call");
+  // 1600 tiles, ~3160 edges; 40 one-block terrace edges need takeoff/landing boxes.
+  ok(queries <= 1600 + 3160 + 80 + 10, "collision queries: " + queries);
+});
+
 print(passed + " tests passed");

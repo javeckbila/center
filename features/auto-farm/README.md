@@ -7,7 +7,12 @@ Put a usable hoe in your hotbar, then `/af start`. Starting selects the closest
 waypoint in three dimensions and continues the saved order from there.
 
 Generated loops use up to six long interior passes, typically **10–15 waypoints
-on a large open bed**. Connections use cardinal neighbors with full player-box
+on a large open bed**. Passes are spaced about three rows apart, so a narrow bed
+gets two passes (one rectangle) instead of zigzagging through every row; the
+count is rounded to an even number so the loop closes along the near headland.
+Separate arms of a U-shaped or stepped bed each get their own passes, and rows
+broken by an obstacle are avoided when an intact row nearby can be used.
+Connections use cardinal neighbors with full player-box
 clearance, solid support and jump headroom;
 water, bare aisles, different crops, tall walls, low ceilings and deeper drops
 cannot become connectors. The closing leg returns through the same checked
@@ -17,11 +22,11 @@ those jumps along the run. Detours prefer fewer turns over slightly shorter
 zigzags. **Newly generated loops never exceed 15 waypoints.** If obstacle bends
 exceed the budget, the planner retries fewer passes, keeping every required
 turn. If even one pass cannot form a safe compact loop, generation fails and
-keeps the previous route. Rows shorter than 60% of the longest available row
-are excluded. A one-pass fallback uses the longest row, never the first edge
-stub. Passes must span at least eight blocks on a large scanned bed (scaled
-down for small beds, with a minimum of two). Irregular beds can require
-retracing crop tiles.
+keeps the previous route. A one-pass fallback uses the longest row, never the
+first edge stub. Passes must span at least eight blocks on a large scanned bed
+(scaled down for small beds, with a minimum of two). Irregular beds can require
+retracing crop tiles. All passes run along one axis, so on an L-shaped bed an
+arm too short in that direction (under eight blocks of interior) is skipped.
 
 Every tile along the saved loop has a **two-row crop buffer in all horizontal
 directions**, including turns and the return leg. Border rows, narrow aisles
@@ -33,8 +38,9 @@ five crop tiles, or regions joined only by a narrow neck, may lack room for
 the sweep. Lane spacing favors long runs and a small waypoint list; six passes
 do not guarantee harvesting every planted tile of a very wide farm per lap.
 
-Scanning and route construction run in small main-thread tick slices (up to
-64 work items or about 6 ms per slice). Up to 32,768 reachable crop tiles are
+Scanning and route construction run in main-thread tick slices of about 8 ms.
+The scan uses one swept collision query per tile and per crop-to-crop step
+(three for a terrace jump), instead of nine to twenty-seven. Up to 32,768 reachable crop tiles are
 supported; older larger saved routes remain readable. A scan touching unloaded chunks or
 exceeding the limit fails instead of saving an incomplete loop. Failed or
 canceled generation keeps your previous route. `/af status` shows progress;

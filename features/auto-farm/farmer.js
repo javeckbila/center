@@ -115,7 +115,7 @@ function createFarmer(deps) {
       if (!joining || G.length(position.x - joinOrigin.x, position.z - joinOrigin.z) > 0.2 || Math.abs(position.y - joinOrigin.y) > 0.2) {
         joining = createJoin(W.survey(game, saved.crop), saved.points[nearest]); joinOrigin = position;
       }
-      const joined = joining.step(64, 6);
+      const joined = joining.step(1000000, 6);
       if (!joined.done) { status = "Finding crop-only approach to waypoint " + (nearest + 1); return; }
       if (!joined.path) return halt("Closest waypoint has no loaded, crop-only approach. Stand on the crop bed or regenerate.");
       approach = joined.path.slice(0, -1);
