@@ -2,3 +2,4 @@
 require("./info-hud");
 require("./toggle-sprint");
 require("./auto-miner/index");
+require("./auto-farm/index");

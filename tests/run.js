@@ -56,7 +56,7 @@ function runTasks() { var t = tasks; tasks = []; t.forEach(function (fn) { fn();
 function frames(n) { for (var i = 0; i < (n || 3); i++) fire("step"); }
 var sprint = { down: false, isDown: function () { return this.down; }, setDown: function (v) { this.down = v; } };
 // Minecraft: the auto miner's mock world, plus what the other features use.
-var MOCKW = require("center/tests/mock-world").createMockWorld({});
+var MOCKW = require("center/tests/mock-farm-world").createFarmWorld({});
 MOCKW.packetSink = function (packet, event) { fire("packetsent", packet, event); };
 var mc = MOCKW.game;
 mc.options.keySprint = sprint;
@@ -131,6 +131,7 @@ function makeCtx(w, h) {
 files["center/config.json"] = JSON.stringify({ features: {
   "info-hud": { values: { corner: "Bottom right" } },
   "auto-miner": { enabled: true, values: {} },
+  "auto-farm": { enabled: true, values: {} },
 } });
 files["auto-miner/settings.json"] = JSON.stringify({ glide: 1.5, hud: false });
 var center = require("center/index");
@@ -174,7 +175,7 @@ function rowY(labelText) { return findText(labelText).y - 7 - T.state.scroll; }
 test("module loads with interface + example modules and a /center command", function () {
   ok(center.defineFeature && center.open, "public API exported");
   ok(R.get("center") && infoHud && sprintF && R.get("auto-miner"), "features registered");
-  eq(R.all().length, 3, "interface group is hidden");
+  eq(R.all().length, 4, "interface group is hidden");
   ok(triggers.some(function (t) { return t.type === "command" && t.name === "center"; }), "/center registered");
   ok(triggers.some(function (t) { return t.type === "command" && t.name === "auto-miner"; }), "/auto-miner registered");
   eq(R.categories().join(","), "Automation,Movement,Render");
@@ -212,6 +213,7 @@ test("switch click toggles a module and its triggers", function () {
 });
 
 test("clicking a card expands its settings; rows are interactive", function () {
+  click(findText("Render").x + 2, findText("Render").y + 2);
   var y = cardY("Info HUD");
   click(CARD_X + 40, y + 10);
   ok(T.state.expanded["info-hud"], "expanded");
@@ -262,6 +264,7 @@ test("keybind capture, clear, and reset to defaults", function () {
 });
 
 test("typing searches, backspace edits, categories filter", function () {
+  click(findText("All modules").x + 2, findText("All modules").y + 2);
   key(83, "s"); key(80, "p"); key(82, "r");
   eq(T.state.search, "spr", "typing focuses search");
   ok(hasText("Toggle Sprint") && !hasText("Info HUD"), "results filtered");
@@ -291,7 +294,7 @@ test("settings page edits the interface group", function () {
 });
 
 test("open key closes the menu; tooltips and cursor appear on hover", function () {
-  click(findText("All modules").x + 2, findText("All modules").y + 2);
+  click(findText("Render").x + 2, findText("Render").y + 2);
   var t = findText("Ping");
   render(t.x + 2, t.y + 2 - T.state.scroll);
   ok(hasText("Latency reported by the server."), "tooltip drawn for description");
@@ -716,6 +719,83 @@ test("menu lists Auto Miner under Automation with its settings", function () {
   click(CARD_X + 40, cardY("Auto Miner") + 10);
   ok(hasText("Glide") && hasText("Show HUD") && hasText("Diagnostics") && hasText("Toggle key"), "settings rows");
   ok(!hasText("Randomness") && miner.setting("randomness") === null, "randomness setting removed");
+  Client.currentGui.close();
+});
+
+// ---------- Auto Farm integration ----------
+var farmFeature = R.get("auto-farm");
+test("auto farm loads disabled, uses center settings and saves waypoint commands", function () {
+  frames();
+  ok(farmFeature && !farmFeature.isEnabled());
+  eq(farmFeature.get("pitch"), 20); eq(farmFeature.category, "Automation");
+  fireCommand("auto-farm", "clear");
+  mc.player.x = 0.5; mc.player.y = 64; mc.player.z = 0.5;
+  fireCommand("auto-farm", "add");
+  mc.player.z = 4.5; fireCommand("auto-farm", "add");
+  mc.player.z = 8.5; fireCommand("auto-farm", "add");
+  var saved = JSON.parse(files["center/config.json"]).features["auto-farm"].route;
+  eq(saved.points.length, 3); ok(saved.context.indexOf("example.test") >= 0);
+  fireCommand("auto-farm", "remove", "2");
+  eq(ST.entry("auto-farm").route.points[1].z, 8.5, "numbered remove renumbers");
+  fireCommand("auto-farm", "remove"); eq(ST.entry("auto-farm").route.points.length, 1, "remove defaults to last");
+  fireCommand("auto-farm", "remove", "0"); eq(ST.entry("auto-farm").route.points.length, 1, "invalid index rejected");
+  fireCommand("auto-farm", "add");
+  fireCommand("auto-farm", "status"); fireCommand("auto-farm", "list"); fireCommand("auto-farm", "help");
+  ok(chatHas("/af remove [number]"), "command help available");
+});
+
+test("saved chams render while disabled, honor visibility and hide in another dimension", function () {
+  MOCKW.gizmos.length = 0;
+  fire("prerenderworld"); eq(MOCKW.gizmos.length, 4); eq(MOCKW.collections, 0);
+  farmFeature.set("showWaypoints", false); fire("prerenderworld"); eq(MOCKW.gizmos.length, 4);
+  farmFeature.set("showWaypoints", true);
+  MOCKW.dimension = "minecraft:the_nether"; fire("prerenderworld"); eq(MOCKW.gizmos.length, 4);
+  MOCKW.dimension = "minecraft:overworld";
+});
+
+test("auto farm waits for chat, stops on screens, and never fights Auto Miner", function () {
+  MOCKW.floor(); mc.player.z = 0.5;
+  var chatScreen = { _cb: {} };
+  currentScreen = chatScreen;
+  fireCommand("auto-farm", "start");
+  ticks(2); ok(farmFeature.isEnabled()); eq(MOCKW.selectedSlot, 0, "waits for chat");
+  currentScreen = null;
+  ticks(2); eq(MOCKW.selectedSlot, 4, "hoe equipped"); eq(mc.options.keyAttack.down, true);
+  currentScreen = chatScreen; fire("guiopened", chatScreen);
+  eq(mc.options.keyAttack.down, false, "release is immediate");
+  frames(); ok(!farmFeature.isEnabled());
+  fireCommand("auto-farm"); frames(); ok(!farmFeature.isEnabled(), "same stopping chat does not toggle back on");
+  currentScreen = null;
+  miner.setEnabled(true); farmFeature.setEnabled(true); ok(!miner.isEnabled(), "farm disables miner");
+  ticks(2); ok(farmFeature.isEnabled());
+  miner.setEnabled(true); ok(!farmFeature.isEnabled(), "miner disables farm");
+  eq(mc.options.keyAttack.down, false); miner.setEnabled(false);
+});
+
+test("auto farm HUD previews while disabled and shutdown/unload release all inputs", function () {
+  farmFeature.set("showHud", false);
+  HE.open(); frames(); edRender();
+  ok(E.state.boxes.some(b => b.el.feature === farmFeature && !b.box.empty), "disabled HUD preview");
+  ok(edFrame.texts.some(t => t.s === "Auto Farm"));
+  E.onKey("", Keyboard.KEY_ESCAPE);
+  farmFeature.set("showHud", true);
+  farmFeature.setEnabled(true); ticks(2);
+  ok(overlayTexts().indexOf("Auto Farm") >= 0);
+  fire("worldunload"); frames(); ok(!farmFeature.isEnabled());
+  ["Up", "Down", "Left", "Right", "Attack", "Jump", "Sprint"].forEach(k => eq(mc.options["key" + k].down, false));
+  farmFeature.setEnabled(true); ticks(2); fire("gameunload");
+  eq(mc.options.keyAttack.down, false); eq(mc.options.keyUp.down, false);
+  farmFeature.setEnabled(false);
+});
+
+test("Auto Farm menu exposes a working pitch slider and the sweep controls", function () {
+  SC.open(); frames(); render();
+  click(findText("Automation").x + 2, findText("Automation").y + 2);
+  click(CARD_X + 40, cardY("Auto Farm") + 10);
+  ok(hasText("Look pitch") && hasText("Sweep width") && hasText("Sweep period"));
+  click(RIGHT, rowY("Look pitch") + 11);
+  eq(farmFeature.get("pitch"), 90, "pitch slider is connected to feature settings");
+  farmFeature.set("pitch", 20);
   Client.currentGui.close();
 });
 
