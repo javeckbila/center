@@ -90,10 +90,11 @@ function reset(el) {
 }
 
 // Screen-space box of an element, or null if it has nothing to draw.
-// preview: return a placeholder box for empty elements (used by the editor).
+// preview: let the feature measure its editor preview, with a placeholder for
+// elements that still have no content. This never enables the feature.
 function layout(el, sw, sh, preview) {
   const scale = scaleOf(el);
-  let size = el.size(el.feature);
+  let size = el.size(el.feature, preview === true);
   let empty = false;
   if (!size || !positive(size.w) || !positive(size.h)) {
     if (!preview) return null;

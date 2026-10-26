@@ -433,6 +433,10 @@ function dragHud(fromX, fromY, toX, toY) {
 test("hud editor opens from /center hud and takes over HUD drawing", function () {
   infoHud.setEnabled(true);
   infoHud.set("scale", 1);
+  // Keep the other preview clear of the Info HUD interaction scenarios.
+  var amHud = HUD.get("auto-miner");
+  var amBox = HUD.layout(amHud, 480, 270, true);
+  HUD.setPos(amHud, 350, 195, amBox.w, amBox.h, 480, 270);
   fireCommand("center", "hud");
   frames();
   ok(E.gui.isOpen(), "editor opened");
@@ -447,7 +451,9 @@ test("hud editor opens from /center hud and takes over HUD drawing", function ()
 });
 
 test("dragging moves the element; position is anchored to the nearest edge", function () {
+  shift = true;
   dragHud(10, 10, 304, 154);
+  shift = false;
   var b = hudBox();
   eq(b.x, 300); eq(b.y, 150);
   var p = HUD.getPos(infoHud.hud);
@@ -522,14 +528,71 @@ test("menu header 'Edit HUD' opens the editor and Done goes back to the menu", f
   Client.currentGui.close();
 });
 
-test("disabled HUD modules are hidden in the editor", function () {
+test("disabled HUD modules can be previewed and moved without enabling them", function () {
   infoHud.setEnabled(false);
+  HUD.reset(infoHud.hud);
   HE.open(); frames();
   edRender();
-  eq(E.state.boxes.length, 0);
-  ok(edFrame.texts.some(function (t) { return t.s === "No HUD modules are enabled."; }), "empty hint shown");
+  ok(hudBox(), "disabled info HUD has an editable box");
+  ok(edFrame.texts.some(function (t) { return t.s === "XYZ"; }), "actual HUD content is previewed");
+  shift = true;
+  dragHud(10, 10, 304, 154);
+  shift = false;
+  eq(hudBox().x, 300); eq(hudBox().y, 150);
+  ok(!infoHud.isEnabled(), "dragging does not enable the feature");
   E.onKey("\u0100", Keyboard.KEY_ESCAPE);
   eq(currentScreen, null);
+  ST.flush();
+  ok(JSON.parse(files["center/config.json"]).features["info-hud"].hud, "disabled HUD position saved");
+  var overlay = makeCtx(480, 270);
+  fire("renderoverlay", overlay.ctx);
+  ok(!overlay.texts.some(function (t) { return t.s === "XYZ"; }), "preview disappears outside the editor");
+});
+
+test("auto miner HUD previews and edits while disabled with Show HUD off", function () {
+  var am = R.get("auto-miner");
+  ok(!am.isEnabled() && !am.get("showHud"), "starts disabled with HUD hidden");
+  var startsBefore = MOCKW.nativeStarts.length;
+  var oldScale = am.get("scale");
+  HE.open(); frames();
+  edRender();
+  var entry = E.state.boxes.filter(function (b) { return b.el.feature === am; })[0];
+  ok(entry && !entry.box.empty, "full miner HUD instead of a placeholder");
+  ok(edFrame.texts.some(function (t) { return t.s === "Off"; }), "miner status drawn");
+  ok(edFrame.texts.some(function (t) { return t.s === "Cleared"; }), "details drawn");
+  shift = true;
+  dragHud(entry.box.x + 2, entry.box.y + 2, 202, 42);
+  shift = false;
+  entry = E.state.boxes.filter(function (b) { return b.el.feature === am; })[0];
+  eq(entry.box.x, 200); eq(entry.box.y, 40);
+  E.onScroll(202, 42, 1); edRender();
+  eq(am.get("scale"), oldScale + 0.25, "disabled preview scales");
+  var scaledX = E.state.boxes.filter(function (b) { return b.el.feature === am; })[0].box.x;
+  E.onKey("", Keyboard.KEY_RIGHT); edRender();
+  entry = E.state.boxes.filter(function (b) { return b.el.feature === am; })[0];
+  eq(entry.box.x, scaledX + 1, "disabled preview nudges");
+  frames(); ticks(3);
+  ok(!am.isEnabled() && !am.get("showHud"), "feature and HUD visibility stay unchanged");
+  eq(MOCKW.nativeStarts.length, startsBefore, "preview never starts mining");
+  eq(mc.options.keyAttack.down, false);
+  E.onKey("", Keyboard.KEY_ESCAPE);
+  eq(currentScreen, null);
+  eq(ST.entry("auto-miner").hud.ax, 0.5, "edited position retained");
+  ok(!overlayTexts().some(function (s) { return s === "Auto Miner"; }), "miner HUD hidden after editor closes");
+  am.set("scale", oldScale);
+});
+
+test("HUD editor previews auto miner outside a world and uses placeholders for empty HUDs", function () {
+  worldLoaded = false;
+  HE.open(); frames();
+  edRender();
+  var am = R.get("auto-miner");
+  var entry = E.state.boxes.filter(function (b) { return b.el.feature === am; })[0];
+  ok(entry && !entry.box.empty, "miner preview requires no world");
+  ok(hudBox().empty, "empty info HUD still has a movable placeholder");
+  ok(!am.isEnabled() && !infoHud.isEnabled(), "preview leaves features off");
+  E.onKey("", Keyboard.KEY_ESCAPE);
+  worldLoaded = true;
 });
 
 test("small screens still lay out", function () {  SC.open(); frames();

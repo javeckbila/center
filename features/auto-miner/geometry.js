@@ -1,8 +1,8 @@
 // Pure math for the auto miner: angles, the mining area, camera spring and
 // mining-time estimates. No Minecraft or CT access, so it is unit-tested directly.
 
-const AREA_WIDTH = 4; // blocks on X and Z
-const AREA_DEPTH = 4; // vertical layers around the player
+const AREA_WIDTH = 5; // blocks on X and Z
+const AREA_DEPTH = 5; // vertical layers around the player
 const MAX_LEAD_TICKS = 6;
 
 const clamp = (n, low, high) => Math.max(low, Math.min(high, n));
@@ -22,9 +22,9 @@ function angles(eye, point) {
   };
 }
 
-// The mining area: an AREA_WIDTH-wide square centred as closely as an even
-// width allows on the player. The four Y layers cover the floor, feet, head,
-// and overhead blocks instead of extending entirely below the player.
+// The mining area: an AREA_WIDTH-wide square centred on the player's block.
+// The Y layers cover the floor, feet, head,
+// and two overhead layers instead of extending entirely below the player.
 function cube(x, y, z) {
   const minX = Math.floor(x - (AREA_WIDTH - 1) / 2);
   const minZ = Math.floor(z - (AREA_WIDTH - 1) / 2);

@@ -1,4 +1,4 @@
-// Auto miner core. Stationary mining of reachable target blocks in a 4x4x4 area
+// Auto miner core. Stationary mining of reachable target blocks in a 5x5x5 area
 // around the start position, with smooth camera motion ("ping glide") and a
 // walk-home controller when the player is pushed.
 //

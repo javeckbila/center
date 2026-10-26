@@ -1,4 +1,4 @@
-// HUD editor: drag enabled HUD elements anywhere on screen.
+// HUD editor: preview and position every HUD element, including disabled features.
 //   drag            move (snaps to screen edges/center and other elements)
 //   Shift + drag    move without snapping
 //   scroll          change the element's scale (if it has one)
@@ -35,7 +35,7 @@ const state = {
   lastError: 0,
 };
 
-const visible = () => hud.elements().filter(el => el.feature.isEnabled());
+const visible = () => hud.elements();
 const inBox = (b, mx, my) => mx >= b.x && mx < b.x + b.w && my >= b.y && my < b.y + b.h;
 const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
@@ -116,7 +116,7 @@ function button(txt, x, y, onClick, mx, my, primary, accent) {
 function resetAll() { hud.elements().forEach(el => hud.reset(el)); }
 
 function drawToolbar(mx, my, sw, sh, accent, count) {
-  const lines = count ? HINTS : ["No HUD modules are enabled.", "Enable one in the menu, then come back."];
+  const lines = count ? HINTS : ["No HUD modules are available.", "Installed HUD modules appear here automatically."];
   const w = Math.max.apply(null, lines.map(l => draw.width(l))) + 24;
   const h = 8 + 10 + 4 + lines.length * 10 + 6 + 14 + 8;
   const x = Math.floor((sw - w) / 2);

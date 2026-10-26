@@ -180,8 +180,8 @@ function detailRows(f, s) {
   ];
 }
 
-function measure(f) {
-  if (!miner || !f.get("showHud") || !World.isLoaded()) return null;
+function measure(f, preview) {
+  if (!miner || (!preview && (!f.get("showHud") || !World.isLoaded()))) return null;
   const s = miner.state();
   const rows = detailRows(f, s);
   const labelW = rows.length ? Math.max.apply(null, rows.map(r => draw.width(r[0]))) : 0;
@@ -210,7 +210,7 @@ module.exports = defineFeature({
   id: ID,
   name: "Auto Miner",
   category: "Automation",
-  description: "Mines cobblestone, iron ore, diamond ore and ancient debris in a 4x4x4 area around you.",
+  description: "Mines reachable cobblestone, iron ore, diamond ore and ancient debris in a 5x5x5 area around you.",
   persistEnabled: false, // a macro must never resume by itself after a reload
   settings: [
     {

@@ -10,9 +10,9 @@ var NAVI = require("center/features/auto-miner/navigation");
 var MINER = require("center/features/auto-miner/miner");
 var MOCK = require("center/tests/mock-world");
 
-// Whole floor layer of the area (x/z -1..2 around a player at 0.5, 0.5) as cobblestone.
+// Whole floor layer of the area (x/z -2..2 around a player at 0.5, 0.5) as cobblestone.
 function fillTopLayer(h) {
-  for (var x = -1; x <= 2; x++) for (var z = -1; z <= 2; z++) h.w.blocks.set(x + ",63," + z, h.w.cobble);
+  for (var x = -2; x <= 2; x++) for (var z = -2; z <= 2; z++) h.w.blocks.set(x + ",63," + z, h.w.cobble);
 }
 
 function harness(options) {
@@ -59,18 +59,18 @@ function harness(options) {
 
 // ---------- pure helpers ----------
 
-test("mining area covers four layers around positive and negative positions", function () {
+test("mining area covers a full 5x5x5 cube around positive and negative positions", function () {
   [[0.5, 64, 0.5], [-15.8, -12, -21.3]].forEach(function (c) {
     var region = GEO.cube(c[0], c[1], c[2]);
-    eq(region.blocks.length, 64);
-    eq(new Set(region.blocks.map(function (p) { return p.x + "," + p.y + "," + p.z; })).size, 64);
+    eq(region.blocks.length, 125);
+    eq(new Set(region.blocks.map(function (p) { return p.x + "," + p.y + "," + p.z; })).size, 125);
     var floorY = Math.floor(c[1] - 0.01);
     eq(region.supportY, floorY);
-    eq(region.topY, floorY + 3);
-    eq(new Set(region.blocks.map(function (p) { return p.x; })).size, 4);
-    eq(new Set(region.blocks.map(function (p) { return p.z; })).size, 4);
-    for (var y = floorY; y <= floorY + 3; y++) {
-      eq(region.blocks.filter(function (p) { return p.y === y; }).length, 16, "full layer at " + y);
+    eq(region.topY, floorY + 4);
+    eq(new Set(region.blocks.map(function (p) { return p.x; })).size, 5);
+    eq(new Set(region.blocks.map(function (p) { return p.z; })).size, 5);
+    for (var y = floorY; y <= floorY + 4; y++) {
+      eq(region.blocks.filter(function (p) { return p.y === y; }).length, 25, "full layer at " + y);
     }
   });
 });
@@ -228,7 +228,7 @@ test("background mining never grabs another application's mouse", function () {
 
 test("every supported material is mined at floor, feet, head and overhead height", function () {
   ["cobble", "iron", "deepslateIron", "diamond", "deepslateDiamond", "debris"].forEach(function (material) {
-    [63, 64, 65, 66].forEach(function (y) {
+    [63, 64, 65, 66, 67].forEach(function (y) {
       var h = harness({ simulateMining: true });
       var id = "0," + y + ",1";
       h.w.blocks.set("0,63,0", h.w[material]);
@@ -245,13 +245,43 @@ test("every supported material is mined at floor, feet, head and overhead height
 test("air, other materials and targets outside the cube are ignored", function () {
   var h = harness({ simulateMining: true });
   h.w.blocks.set("0,64,1", h.w.stone);
-  h.w.blocks.set("0,67,1", h.w.diamond);
+  h.w.blocks.set("0,68,1", h.w.diamond);
   h.w.blocks.set("0,62,1", h.w.iron);
   h.w.blocks.set("3,65,0", h.w.debris);
   ok(h.begin());
   h.run(100);
   eq(h.s().target, null);
   eq(h.w.completed.length, 0);
+  eq(h.opts.keyAttack.down, false);
+});
+
+test("visible blocks beyond interaction reach are never mined", function () {
+  var h = harness({ simulateMining: true });
+  h.w.player.blockInteractionRange = function () { return 1.5; };
+  h.w.blocks.set("0,65,1", h.w.iron);
+  h.w.blocks.set("2,65,0", h.w.diamond);
+  ok(h.begin());
+  h.run(150, function () { return h.w.completed.length > 0; });
+  eq(h.w.completed.length, 1);
+  eq(h.w.completed[0].id, "0,65,1");
+  h.run(100);
+  eq(h.w.completed.length, 1, "farther block still untouched");
+  eq(h.s().target, null);
+  eq(h.opts.keyAttack.down, false);
+  eq(h.w.blocks.get("2,65,0"), h.w.diamond);
+});
+
+test("a target is dropped before mining if interaction reach shrinks", function () {
+  var h = harness({ simulateMining: true });
+  h.w.blocks.set("2,65,0", h.w.debris);
+  ok(h.begin());
+  h.cycle();
+  eq(h.s().target, "2,65,0");
+  h.w.player.blockInteractionRange = function () { return 1; };
+  h.run(100);
+  eq(h.w.completed.length, 0);
+  eq(h.w.nativeStarts.length, 0);
+  eq(h.s().target, null);
   eq(h.opts.keyAttack.down, false);
 });
 
