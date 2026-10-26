@@ -17,12 +17,18 @@ those jumps along the run. Detours prefer fewer turns over slightly shorter
 zigzags. **Newly generated loops never exceed 15 waypoints.** If obstacle bends
 exceed the budget, the planner retries fewer passes, keeping every required
 turn. If even one pass cannot form a safe compact loop, generation fails and
-keeps the previous route. Irregular beds can require retracing crop tiles.
+keeps the previous route. Rows shorter than 60% of the longest available row
+are excluded. A one-pass fallback uses the longest row, never the first edge
+stub. Passes must span at least eight blocks on a large scanned bed (scaled
+down for small beds, with a minimum of two). Irregular beds can require
+retracing crop tiles.
 
 Every tile along the saved loop has a **two-row crop buffer in all horizontal
 directions**, including turns and the return leg. Border rows, narrow aisles
-and crop tiles immediately beside walls are excluded. The planner uses the
-connected interior region closest to where you generated. Beds narrower than
+and crop tiles immediately beside walls are excluded. The planner checks all
+interior regions and uses the largest one with useful farming span; distance
+from the player breaks ties. A tiny pocket beside the player cannot hide the
+main bed. Beds narrower than
 five crop tiles, or regions joined only by a narrow neck, may lack room for
 the sweep. Lane spacing favors long runs and a small waypoint list; six passes
 do not guarantee harvesting every planted tile of a very wide farm per lap.

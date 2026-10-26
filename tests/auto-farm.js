@@ -686,4 +686,37 @@ test("a maze needing too many bends fails instead of saving hundreds of waypoint
   ok(result.error.indexOf("15 waypoints") >= 0, result.error);
 });
 
+test("a two-tile interior beside the player cannot hide the main farm", function () {
+  var w = MOCKF.createFarmWorld({}); w.player.y = 63.9375;
+  // The starting 5x6 patch has exactly two inset tiles, one block apart.
+  for (var x = 0; x < 5; x++) for (var z = 0; z < 6; z++) plant(w, x, 64, z);
+  // A crop-only neck connects the scan, but not the inset regions.
+  for (var x = 5; x < 20; x++) plant(w, x, 64, 2);
+  for (var x = 20; x < 50; x++) for (var z = 0; z < 40; z++) plant(w, x, 64, z);
+  var result = generate(w); checkLoop(w, result);
+  ok(result.result.points.length >= 10 && result.result.points.length <= 15, "main bed produces a full set of long passes");
+  ok(result.result.points.every(p => p.x >= 22.5), "selects the main interior instead of the closest tiny pocket");
+  var zs = result.result.points.map(p => p.z);
+  ok(Math.max.apply(null, zs) - Math.min.apply(null, zs) >= 30, "spans the farming area");
+});
+
+test("short edge stubs are not selected as farming lanes or one-pass fallbacks", function () {
+  var w = MOCKF.createFarmWorld({}); w.player.y = 63.9375;
+  for (var x = 0; x < 20; x++) for (var z = 0; z < 40; z++) plant(w, x, 64, z);
+  for (var x = -8; x < 0; x++) for (var z = 0; z < 6; z++) plant(w, x, 64, z);
+  var result = generate(w); checkLoop(w, result);
+  ok(result.result.points.length >= 10, "keeps useful long passes");
+  ok(result.result.points.every(p => p.x >= 2.5), "one-block edge rows are excluded");
+  var zs = result.result.points.map(p => p.z);
+  ok(Math.max.apply(null, zs) - Math.min.apply(null, zs) >= 30, "does not optimize away the farm span");
+});
+
+test("a bed with only two adjacent inset tiles is rejected without saving a tiny loop", function () {
+  var w = MOCKF.createFarmWorld({}); w.player.y = 63.9375;
+  for (var x = 0; x < 5; x++) for (var z = 0; z < 6; z++) plant(w, x, 64, z);
+  var result = generate(w);
+  ok(result.error && !result.result, "no successful one-block back-and-forth");
+  ok(result.error.indexOf("tiny") >= 0 && result.error.indexOf("Previous route kept") >= 0, result.error);
+});
+
 print(passed + " tests passed");

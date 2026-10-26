@@ -89,13 +89,18 @@ function createGenerator(reader, context) {
   const nodes = new Map(), columns = new Map(), queue = [], interior = new Set();
   let cursor = 0, phase = "scan", error = null, result = null;
   let current = null, walk = [], search = null, targets = [], targetIndex = 0;
-  let nearest = null, nearestDistance = Infinity, component = [], componentSet = new Set();
+  let component = [], componentSet = new Set(), bestComponent = [], bestProximity = Infinity;
+  const componentVisited = new Set();
+  let interiorSeeds = [], interiorCursor = 0, minimumRun = 2;
+  let fieldMinX = Infinity, fieldMaxX = -Infinity, fieldMinZ = Infinity, fieldMaxZ = -Infinity;
   let passLimit = 6;
   if (!seed) { phase = "failed"; error = "Stand on a supported crop with clear headroom before generating."; }
   else addNode(seed);
 
   function fail(message) { error = message; phase = "failed"; }
   function addNode(tile) {
+    fieldMinX = Math.min(fieldMinX, tile.x); fieldMaxX = Math.max(fieldMaxX, tile.x);
+    fieldMinZ = Math.min(fieldMinZ, tile.z); fieldMaxZ = Math.max(fieldMaxZ, tile.z);
     nodes.set(cropTileKey(tile), { tile, edges: [] }); queue.push(tile);
     const column = tile.x + "," + tile.z;
     if (!columns.has(column)) columns.set(column, []);
@@ -122,12 +127,26 @@ function createGenerator(reader, context) {
       rows.get(t[across]).push(id);
     });
     const coordinates = Array.from(rows.keys()).sort((a, b) => a - b);
-    const passes = Math.min(passLimit, coordinates.length);
+    let longest = 0, longestRow = null;
+    coordinates.forEach(coordinate => {
+      const row = rows.get(coordinate);
+      row.sort((a, b) => nodes.get(a).tile[along] - nodes.get(b).tile[along]);
+      const span = nodes.get(row[row.length - 1]).tile[along] - nodes.get(row[0]).tile[along];
+      if (span > longest) { longest = span; longestRow = coordinate; }
+    });
+    const usefulRows = coordinates.filter(coordinate => {
+      const row = rows.get(coordinate);
+      const span = nodes.get(row[row.length - 1]).tile[along] - nodes.get(row[0]).tile[along];
+      return span >= Math.max(minimumRun, longest * 0.6);
+    });
+    if (!usefulRows.length) return fail("No useful farming passes: need a crop-only run of at least " + minimumRun +
+      " blocks with sweep clearance (" + nodes.size + " crops scanned). Previous route kept.");
+    const passes = Math.min(passLimit, usefulRows.length);
+    passLimit = passes;
     // Six long harvesting passes give about twelve turns on an open plot.
     // Retry fewer passes when essential bends exceed the waypoint budget.
     for (let i = 0; i < passes; i++) {
-      const row = rows.get(coordinates[passes === 1 ? 0 : Math.round(i * (coordinates.length - 1) / (passes - 1))]);
-      row.sort((a, b) => nodes.get(a).tile[along] - nodes.get(b).tile[along]);
+      const row = rows.get(passes === 1 ? longestRow : usefulRows[Math.round(i * (usefulRows.length - 1) / (passes - 1))]);
       const ends = i % 2 ? [row[row.length - 1], row[0]] : [row[0], row[row.length - 1]];
       ends.forEach(id => { if (!targets.length || targets[targets.length - 1] !== id) targets.push(id); });
     }
@@ -158,6 +177,8 @@ function createGenerator(reader, context) {
       if (phase === "scan") {
         if (cursor === queue.length) {
           if (nodes.size < 2) { fail("Need at least two connected, walkable crop tiles."); break; }
+          const fieldSpan = Math.max(fieldMaxX - fieldMinX, fieldMaxZ - fieldMinZ);
+          minimumRun = Math.min(8, Math.max(2, Math.ceil((fieldSpan - SWEEP_MARGIN * 2) * 0.5)));
           cursor = 0; phase = "inset"; continue;
         }
         const a = queue[cursor++], node = nodes.get(cropTileKey(a));
@@ -175,8 +196,8 @@ function createGenerator(reader, context) {
         });
       } else if (phase === "inset") {
         if (cursor === queue.length) {
-          if (!nearest) { fail("No room for sweeping: need at least two crop rows of clearance from every border, aisle and wall."); break; }
-          component = [nearest]; componentSet.add(nearest); cursor = 0; phase = "component"; continue;
+          if (!interior.size) { fail("No room for sweeping: need at least two crop rows of clearance from every border, aisle and wall."); break; }
+          interiorSeeds = Array.from(interior); component = []; cursor = 0; phase = "component"; continue;
         }
         const a = queue[cursor++]; let room = true;
         for (let dx = -SWEEP_MARGIN; dx <= SWEEP_MARGIN && room; dx++) for (let dz = -SWEEP_MARGIN; dz <= SWEEP_MARGIN && room; dz++) {
@@ -184,15 +205,33 @@ function createGenerator(reader, context) {
           room = !!nearby && nearby.some(b => Math.abs(b.y - a.y) <= SWEEP_MARGIN + 0.01);
         }
         if (room) {
-          const id = cropTileKey(a); interior.add(id);
-          const distance = (a.x - seed.x) ** 2 + (a.z - seed.z) ** 2 + (a.y - seed.y) ** 2;
-          if (distance < nearestDistance) { nearestDistance = distance; nearest = id; }
+          interior.add(cropTileKey(a));
         }
       } else if (phase === "component") {
-        if (cursor === component.length) { planLanes(); continue; }
-        nodes.get(component[cursor++]).edges.forEach(id => {
-          if (interior.has(id) && !componentSet.has(id)) { componentSet.add(id); component.push(id); }
-        });
+        if (cursor < component.length) {
+          nodes.get(component[cursor++]).edges.forEach(id => {
+            if (interior.has(id) && !componentVisited.has(id)) { componentVisited.add(id); component.push(id); }
+          });
+        } else if (component.length) {
+          let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity, proximity = Infinity;
+          component.forEach(id => {
+            const t = nodes.get(id).tile;
+            minX = Math.min(minX, t.x); maxX = Math.max(maxX, t.x); minZ = Math.min(minZ, t.z); maxZ = Math.max(maxZ, t.z);
+            proximity = Math.min(proximity, (t.x - seed.x) ** 2 + (t.z - seed.z) ** 2 + (t.y - seed.y) ** 2);
+          });
+          if (Math.max(maxX - minX, maxZ - minZ) >= minimumRun &&
+              (component.length > bestComponent.length || component.length === bestComponent.length && proximity < bestProximity)) {
+            bestComponent = component; bestProximity = proximity;
+          }
+          component = []; cursor = 0;
+        } else if (interiorCursor < interiorSeeds.length) {
+          const id = interiorSeeds[interiorCursor++];
+          if (!componentVisited.has(id)) { componentVisited.add(id); component.push(id); }
+        } else {
+          if (!bestComponent.length) { fail("Only tiny sweep-clear patches found among " + nodes.size +
+            " crop tiles; need a farming pass at least " + minimumRun + " blocks long. Previous route kept."); break; }
+          component = bestComponent; componentSet = new Set(component); planLanes();
+        }
       } else if (phase === "search") {
         const found = search.step(1);
         if (found.done) {
