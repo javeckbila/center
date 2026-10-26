@@ -652,6 +652,7 @@ test("menu lists Auto Miner under Automation with its settings", function () {
   ok(hasText("Auto Miner") && !hasText("Info HUD"), "category filter");
   click(CARD_X + 40, cardY("Auto Miner") + 10);
   ok(hasText("Glide") && hasText("Show HUD") && hasText("Diagnostics") && hasText("Toggle key"), "settings rows");
+  ok(!hasText("Randomness") && miner.setting("randomness") === null, "randomness setting removed");
   Client.currentGui.close();
 });
 

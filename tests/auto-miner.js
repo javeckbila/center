@@ -10,18 +10,10 @@ var NAVI = require("center/features/auto-miner/navigation");
 var MINER = require("center/features/auto-miner/miner");
 var MOCK = require("center/tests/mock-world");
 
-// Deterministic uniform [0, 1) source (LCG) so random target picks are reproducible.
-// Plain modular arithmetic: CT's Rhino (opt 9) returns signed results from `>>> 0`.
-function seeded(seed) {
-  var s = seed % 4294967296;
-  return function () { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; };
-}
-
 // Whole floor layer of the area (x/z -1..2 around a player at 0.5, 0.5) as cobblestone.
 function fillTopLayer(h) {
   for (var x = -1; x <= 2; x++) for (var z = -1; z <= 2; z++) h.w.blocks.set(x + ",63," + z, h.w.cobble);
 }
-function distinct(list) { return new Set(list).size; }
 
 function harness(options) {
   options = options || {};
@@ -34,8 +26,6 @@ function harness(options) {
     now: function () { return w.clock; },
     inGui: function () { return w.gui; },
     glide: function () { return 1; },
-    randomness: function () { return options.randomness || 0; },
-    random: seeded(options.seed || 1),
     onStart: function () { starts++; },
     onHalt: function (reason, opts) { halts.push({ reason: reason, refused: !!opts.refused }); },
   });
@@ -366,7 +356,7 @@ test("eight consecutive blocks are mined quickly with a single native start", fu
   eq(h.s().cleared, 8);
 });
 
-// ---------- regenerating blocks / randomness ----------
+// ---------- nearest-block selection ----------
 
 function mineRegenerating(options, count) {
   var h = harness(Object.assign({ simulateMining: true, regenDelay: 3 }, options));
@@ -377,60 +367,62 @@ function mineRegenerating(options, count) {
   return h.w.completed.map(function (c) { return c.id; });
 }
 
-test("regenerating cobblestone is spread over the area instead of looping the closest five", function () {
-  // Five blocks in front, six behind. Regeneration takes about as long as mining
-  // the front five, which made the old nearest-turn choice loop over them forever.
-  var FRONT = ["-1,63,2", "0,63,2", "1,63,2", "0,63,1", "1,63,1"];
-  var BEHIND = ["-1,63,-1", "0,63,-1", "1,63,-1", "2,63,-1", "-1,63,0", "2,63,0"];
-  var h = harness({ simulateMining: true, progress: 0.5, regenDelay: 1.5, randomness: 0 });
-  FRONT.concat(BEHIND).forEach(function (id) { h.w.blocks.set(id, h.w.cobble); });
+test("closest block wins over a smaller camera turn or a higher layer", function () {
+  var h = harness();
+  h.w.player.yaw = 0;
+  h.w.player.pitch = 0;
+  h.w.blocks.set("0,65,2", h.w.cobble); // farther, straight ahead
+  h.w.blocks.set("-1,65,0", h.w.iron); // closest, to the side
+  h.w.blocks.set("1,66,1", h.w.diamond); // higher but farther
   ok(h.begin());
-  h.run(3000, function () { return h.w.completed.length >= 30; });
-  var order = h.w.completed.map(function (c) { return c.id; });
-  eq(distinct(order.slice(0, 11)), 11, "every block before any repeat: " + order.slice(0, 11).join(" "));
-  ok(order.filter(function (id) { return BEHIND.indexOf(id) >= 0; }).length >= 12, "blocks behind are mined too");
+  h.cycle();
+  eq(h.s().target, "-1,65,0");
 });
 
-test("a fully regenerating layer is covered without short repeats", function () {
-  // 15 eligible blocks (16 minus the support block); each regenerates 3 s after it is mined.
-  var order = mineRegenerating({ randomness: 0 }, 30);
-  ok(distinct(order.slice(0, 15)) >= 13, "first 15 picks cover the area: " + order.slice(0, 15).join(" "));
-  ok(distinct(order) >= 14, "30 picks reach almost every block: " + distinct(order));
-  for (var i = 5; i < order.length; i++) {
-    ok(order.slice(i - 5, i).indexOf(order[i]) < 0, "block " + order[i] + " repeated within 5 picks at " + i);
-  }
-  ok(order.indexOf("0,63,0") < 0, "support block never mined");
-});
-
-test("randomness varies the order between runs and still avoids recently mined blocks", function () {
-  var a = mineRegenerating({ randomness: 1, seed: 7 }, 20);
-  var b = mineRegenerating({ randomness: 1, seed: 99 }, 20);
-  ok(a.join() !== b.join(), "different seeds give different orders");
-  [a, b].forEach(function (order) {
-    ok(distinct(order.slice(0, 15)) >= 12, "spread: " + order.slice(0, 15).join(" "));
-    for (var i = 3; i < order.length; i++) ok(order.slice(i - 3, i).indexOf(order[i]) < 0, "no immediate repeats");
-  });
-  eq(mineRegenerating({ randomness: 0 }, 12).join(), mineRegenerating({ randomness: 0, seed: 5 }, 12).join(),
-    "randomness 0 is deterministic");
-});
-
-test("the planned successor is kept while valid, so random picks do not flicker", function () {
-  var h = harness({ simulateMining: true, regenDelay: 3, randomness: 1, seed: 3 });
-  fillTopLayer(h);
+test("closest targetable block skips a nearer occluded ore", function () {
+  var h = harness();
+  h.w.blocks.set("0,65,2", h.w.iron); // nearer but hidden behind stone
+  h.w.blocks.set("0,65,1", h.w.stone);
+  h.w.blocks.set("2,65,1", h.w.diamond); // farther but visible to the side
   ok(h.begin());
-  var seen = {};
-  h.run(400, function () {
-    var s = h.s();
-    if (s.target && s.next) {
-      seen[s.target] = seen[s.target] || {};
-      seen[s.target][s.next] = true;
-    }
-    return h.w.completed.length >= 12;
-  });
-  Object.keys(seen).forEach(function (t) {
-    ok(Object.keys(seen[t]).length === 1, "successor of " + t + " changed: " + Object.keys(seen[t]).join(" "));
-  });
-  eq(h.w.aborts.length, 0, "no aborted breaks");
+  h.cycle();
+  eq(h.s().target, "2,65,1");
+});
+
+test("regenerating blocks use a deterministic order and preserve support", function () {
+  var a = mineRegenerating({}, 20);
+  var b = mineRegenerating({}, 20);
+  eq(a.join(), b.join());
+  ok(a.indexOf("0,63,0") < 0, "support block never mined");
+});
+
+test("handoff rescans for a newly available closer block", function () {
+  var h = harness();
+  h.w.blocks.set("0,65,1", h.w.cobble);
+  h.w.blocks.set("0,65,2", h.w.iron);
+  ok(h.begin());
+  h.run(50, function () { return h.opts.keyAttack.down; });
+  eq(h.s().target, "0,65,1");
+  h.w.blocks.set("-1,65,0", h.w.diamond);
+  h.w.blocks.delete("0,65,1");
+  h.step();
+  eq(h.s().target, "-1,65,0");
+});
+
+test("recent mining does not penalise a regenerated closest block", function () {
+  var h = harness({ simulateMining: true, regenDelay: 0.25 });
+  h.w.blocks.set("0,65,1", h.w.cobble);
+  ok(h.begin());
+  h.run(100, function () { return h.w.completed.length === 1; });
+  eq(h.w.completed.length, 1);
+  h.w.blocks.set("2,65,0", h.w.iron);
+  h.run(40, function () { return h.s().target === "2,65,0"; });
+  eq(h.s().target, "2,65,0");
+  h.w.clock += 1;
+  h.w.advance();
+  h.w.blocks.delete("2,65,0");
+  h.step();
+  eq(h.s().target, "0,65,1");
 });
 
 // ---------- stopping ----------

@@ -217,12 +217,6 @@ module.exports = defineFeature({
       type: "slider", key: "glide", name: "Glide", min: GLIDE_MIN, max: GLIDE_MAX, step: 0.05, default: 1, unit: "x",
       description: "Camera smoothing. Higher turns slower and drifts wider; lower turns faster.",
     },
-    {
-      type: "slider", key: "randomness", name: "Randomness", min: 0, max: 1, step: 0.05, default: 0.5,
-      format: v => Math.round(v * 100) + "%",
-      description: "How freely the next block is picked. 0% always takes the smallest turn; higher spreads mining " +
-        "around the area. Recently mined blocks are avoided either way, so regenerating blocks are not looped.",
-    },
     { type: "toggle", key: "showHud", name: "Show HUD", default: true },
     {
       type: "toggle", key: "hudDetails", name: "HUD details", default: true,
@@ -257,7 +251,6 @@ module.exports = defineFeature({
       now: () => Clock.nanoTime() / 1e9,
       inGui: () => Client.isInGui(),
       glide: () => f.get("glide"),
-      randomness: () => f.get("randomness"),
       onStart: () => say("&aOn. Mining cobblestone, iron ore, diamond ore and ancient debris in the " + AREA_WIDTH + "x" + AREA_DEPTH + "x" + AREA_WIDTH +
         " area around you; your footing is kept."),
       onHalt: (reason, opts) => onHalt(f, reason, opts),

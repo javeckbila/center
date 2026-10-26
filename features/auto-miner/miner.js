@@ -14,8 +14,6 @@
 //   now()    seconds (monotonic)
 //   inGui()  whether a screen is open
 //   glide()  camera glide factor, 0.25..2
-//   randomness()  0..1, how freely the next block is drawn (0 = always the cheapest)
-//   random()      optional uniform [0, 1) source (default Math.random; seeded in tests)
 //   onStart()                 mining began after start()
 //   onHalt(reason, { refused, silent })  the miner stopped itself
 // Lifecycle: start() arms it; once no screen has been open for ARM_TICKS ticks
@@ -36,14 +34,10 @@ const STALL_STAGES = 2;       // crack stages without progress before a break co
 const RETRY_COOLDOWN = 0.15;  // s before an abandoned position is retried
 const HOME_DRIFT = 0.06;      // horizontal blocks from home that count as being pushed
 const HOME_HEIGHT = 0.1;
-const LAYER_COST = 14;        // target cost per layer below the top (prefer shallow blocks)
 const EXIT_MARGIN = 0.88;     // fraction of the in-silhouette path used by pre-glide
 const IDLE_PITCH = 68;
 const DRIFT_AMOUNT = 0.026;   // blocks of aim-point drift at glide 1
 const TICK_SECONDS = 0.05;
-const RECENT_WINDOW = 30;      // s a mined position stays penalised (decays linearly)
-const RECENT_PENALTY = 300;    // cost of a just-mined position; above a full 180° turn, so any unmined block wins
-const RANDOM_TEMPERATURE = 30; // cost spread of the weighted draw at randomness 1
 
 const vector = v => ({ x: v.x, y: v.y, z: v.z });
 const blockKey = pos => pos.x + "," + pos.y + "," + pos.z;
@@ -56,11 +50,6 @@ function createMiner(deps) {
     const g = deps.glide();
     return typeof g === "number" && isFinite(g) && g > 0 ? g : 1;
   };
-  const randomness = () => {
-    const r = deps.randomness ? deps.randomness() : 0;
-    return typeof r === "number" && isFinite(r) ? G.clamp(r, 0, 1) : 0;
-  };
-  const random = deps.random || Math.random;
 
   let phase = "off"; // off | arming | running
   let activity = "off";
@@ -87,7 +76,6 @@ function createMiner(deps) {
   let lastInput = "no mining tick observed";
   const movementOwned = new Set();
   const cooldowns = new Map();
-  const minedAt = new Map(); // block id -> time it was last mined this run
   const startup = { needed: true, lastAttempt: -Infinity, attempts: 0, result: "not attempted" };
   const packets = { start: 0, abort: 0, stop: 0 };
 
@@ -203,14 +191,13 @@ function createMiner(deps) {
     const p = game.player;
     const time = now();
     const region = G.cube(p.getX(), p.getY(), p.getZ());
-    anchor = { x: p.getX(), y: p.getY(), z: p.getZ(), blocks: region.blocks, topY: region.topY,
+    anchor = { x: p.getX(), y: p.getY(), z: p.getZ(), blocks: region.blocks,
       supportY: region.supportY, idleYaw: p.getYRot() };
     yaw.value = p.getYRot(); yaw.velocity = 0;
     pitch.value = p.getXRot(); pitch.velocity = 0;
     target = null;
     nextTarget = null;
     cooldowns.clear();
-    minedAt.clear();
     cleared = 0;
     expectedTicks = 0;
     toolSpeed = 0;
@@ -237,53 +224,31 @@ function createMiner(deps) {
 
   // ---------- targets ----------
   //
-  // Each visible candidate gets a cost: the camera turn from the current aim,
-  // a per-layer cost (shallow first), and a penalty for blocks mined recently.
-  // On servers where mined cobblestone regenerates after a few seconds, the
-  // penalty stops the miner from cycling through the same few closest blocks.
-  // With randomness > 0 the choice is a weighted draw over those costs
-  // (cheaper = likelier) instead of always the cheapest.
-
-  function recencyPenalty(id, time) {
-    const at = minedAt.get(id);
-    if (at === undefined) return 0;
-    return RECENT_PENALTY * Math.max(0, 1 - (time - at) / RECENT_WINDOW);
-  }
-
-  function choose(candidates) {
-    if (!candidates.length) return null;
-    let cheapest = candidates[0];
-    candidates.forEach(c => { if (c.cost < cheapest.cost) cheapest = c; });
-    const temperature = randomness() * RANDOM_TEMPERATURE;
-    if (temperature <= 0 || candidates.length === 1) return cheapest;
-    const weights = candidates.map(c => Math.exp(-(c.cost - cheapest.cost) / temperature));
-    let roll = random() * weights.reduce((a, b) => a + b, 0);
-    for (let i = 0; i < candidates.length; i++) {
-      roll -= weights[i];
-      if (roll <= 0) return candidates[i];
-    }
-    return candidates[candidates.length - 1];
-  }
+  // Choose the closest visible, reachable block centre to the player's eyes.
+  // Equal distances keep scan order, so selection is deterministic. Only the
+  // short completion/retry cooldown can temporarily exclude a nearby block.
 
   function findTarget(game, time, excluded) {
     const box = game.player.getBoundingBox();
     const eye = vector(game.player.getEyePosition());
-    const reference = target ? G.angles(eye, target.point) : { yaw: yaw.value, pitch: pitch.value };
-    const candidates = [];
+    let picked = null;
+    let nearest = Infinity;
     for (const block of anchor.blocks) {
       if (G.supportsFeet(block, anchor.supportY, box)) continue;
       const id = blockKey(block);
       if (id === excluded || (cooldowns.get(id) || 0) > time) continue;
       const pos = W.blockPos(block.x, block.y, block.z);
       if (!W.isTarget(game, pos)) continue;
+      const dx = block.x + 0.5 - eye.x;
+      const dy = block.y + 0.5 - eye.y;
+      const dz = block.z + 0.5 - eye.z;
+      const distance = dx * dx + dy * dy + dz * dz;
+      if (distance >= nearest) continue;
       const point = W.visiblePoint(game, pos);
       if (!point) continue;
-      const look = G.angles(eye, point);
-      const cost = Math.abs(G.wrap(look.yaw - reference.yaw)) + Math.abs(look.pitch - reference.pitch) * 0.7 +
-        (anchor.topY - block.y) * LAYER_COST + recencyPenalty(id, time);
-      candidates.push({ pos, point, id, cost });
+      nearest = distance;
+      picked = { pos, point, id };
     }
-    const picked = choose(candidates);
     if (!picked) return null;
     return {
       pos: picked.pos, point: picked.point, id: picked.id, acquired: time, miningSince: 0, started: false,
@@ -291,25 +256,9 @@ function createMiner(deps) {
     };
   }
 
-  // Re-validates a previously chosen block: still a target, off cooldown and
-  // visible. Updates its aim point.
-  function stillValid(game, time, candidate) {
-    if (!candidate || !W.isTarget(game, candidate.pos) || (cooldowns.get(candidate.id) || 0) > time) return false;
-    const point = W.visiblePoint(game, candidate.pos);
-    if (!point) return false;
-    candidate.point = point;
-    return true;
-  }
-
-  function selectTarget(game, time, preferred) {
-    target = null;
-    if (stillValid(game, time, preferred)) {
-      preferred.acquired = time;
-      preferred.lastAimProgress = time;
-      preferred.lastProgress = time;
-      target = preferred;
-    }
-    if (!target) target = findTarget(game, time, null);
+  function selectTarget(game, time) {
+    // Rescan at handoff: the completed break may have exposed a nearer block.
+    target = findTarget(game, time, null);
     nextTarget = null;
     nextPlan = 0;
     stage = -1;
@@ -319,23 +268,21 @@ function createMiner(deps) {
   }
 
   function retireTarget(game, time, completed) {
-    const preferred = nextTarget;
     if (target) {
       if (completed) {
         cleared++;
-        minedAt.set(target.id, time);
       }
       cooldowns.set(target.id, time + (completed ? Math.max(0.05, pingMs / 1000 + 0.05) : RETRY_COOLDOWN));
     }
     releaseAttack(game);
-    selectTarget(game, time, preferred);
+    selectTarget(game, time);
   }
 
   function refreshTarget(game, time, checkVisibility) {
     if (target && (target.completed || !W.isTarget(game, target.pos))) {
       retireTarget(game, time, target.completed || target.miningSince > 0);
     }
-    if (!target && time >= nextScan) selectTarget(game, time, null);
+    if (!target && time >= nextScan) selectTarget(game, time);
     if (!target || !checkVisibility) return;
     const point = W.visiblePoint(game, target.pos);
     if (!point) {
@@ -375,11 +322,7 @@ function createMiner(deps) {
   function planNext(game, time) {
     if (!target || time < nextPlan) return;
     nextPlan = time + PLAN_INTERVAL;
-    // Keep the planned successor while it stays valid: re-drawing every plan
-    // would make a random pick (and the pre-glide direction) flicker.
-    if (!nextTarget || nextTarget.id === target.id || !stillValid(game, time, nextTarget)) {
-      nextTarget = findTarget(game, time, target.id);
-    }
+    nextTarget = findTarget(game, time, target.id);
     const eye = vector(game.player.getEyePosition());
     target.exitLook = nextTarget ? safeLook(game, G.angles(eye, target.point), G.angles(eye, nextTarget.point)) : null;
   }
