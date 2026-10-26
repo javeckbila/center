@@ -517,6 +517,7 @@ function generate(w) {
 function checkLoop(w, result, expected) {
   ok(result.result, result.error);
   var saved = result.result, reader = FARM_WORLD.createWorld(w.T).survey(w.game), seen = new Set();
+  ok(saved.points.length <= 15, "never saves an oversized step-by-step route");
   saved.points.forEach((a, i) => {
     var b = saved.points[(i + 1) % saved.points.length];
     var dx = b.x - a.x, dz = b.z - a.z, distance = Math.abs(dx) + Math.abs(dz);
@@ -639,6 +640,50 @@ test("generated farming attacks crops and releases attack on walls even between 
   h.w.crops.delete("0,64,1"); h.w.blocks.set("0,64,1", h.w.stone);
   h.w.advance(); h.farmer.frame(); eq(h.w.game.options.keyAttack.down, false, "wall is never attacked");
   h.farmer.stop(); released(h);
+});
+
+test("detours prefer long straight runs over a thousand-waypoint shortest staircase", function () {
+  var graph = new Map(), tiles = new Map(), stairs = [], around = [], size = 600;
+  function tile(x, z) {
+    var id = x + "," + z;
+    if (!tiles.has(id)) { tiles.set(id, { x, z, cy: 64, y: 64 }); graph.set(id, []); }
+    return tiles.get(id);
+  }
+  stairs.push(tile(0, 0));
+  for (var i = 1; i <= size; i++) { stairs.push(tile(i - 1, i)); stairs.push(tile(i, i)); }
+  around.push(tile(0, 0)); around.push(tile(-1, 0));
+  for (var z = 1; z <= size + 2; z++) around.push(tile(-1, z));
+  for (var x = 0; x <= size; x++) around.push(tile(x, size + 2));
+  around.push(tile(size, size + 1)); around.push(tile(size, size));
+  function connect(path) {
+    for (var i = 1; i < path.length; i++) {
+      var a = path[i - 1], b = path[i];
+      graph.get(a.x + "," + a.z).push(b); graph.get(b.x + "," + b.z).push(a);
+    }
+  }
+  connect(stairs); connect(around);
+  ok(GENERATOR.compress(stairs).length > 1000, "reproduces the old tiny-step explosion");
+  var search = GENERATOR.createPathSearch(stairs[0], stairs[stairs.length - 1], p => graph.get(p.x + "," + p.z)), state;
+  for (var i = 0; i < 1000; i++) { state = search.step(64); if (state.done) break; }
+  ok(state.path, "finds a route");
+  ok(state.path.length > stairs.length, "accepts a slightly longer walk to eliminate hundreds of turns");
+  eq(GENERATOR.compress(state.path).length, 5, "only the essential four runs remain");
+});
+
+test("a maze needing too many bends fails instead of saving hundreds of waypoints", function () {
+  var w = MOCKF.createFarmWorld({}); w.player.y = 63.9375;
+  for (var x = 0; x < 20; x++) for (var z = 0; z < 100; z++) plant(w, x, 64, z);
+  for (var barrier = 0; barrier < 9; barrier++) {
+    var z = 8 + barrier * 10;
+    for (var x = 0; x < 20; x++) {
+      if (barrier % 2 ? x >= 12 : x < 8) continue;
+      w.crops.delete(x + ",64," + z);
+      w.blocks.set(x + ",64," + z, w.stone); w.blocks.set(x + ",65," + z, w.stone);
+    }
+  }
+  var result = generate(w);
+  ok(result.error && !result.result, "unsafe waypoint-count fallback must never be saved");
+  ok(result.error.indexOf("15 waypoints") >= 0, result.error);
 });
 
 print(passed + " tests passed");

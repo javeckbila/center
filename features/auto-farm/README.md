@@ -13,8 +13,11 @@ water, bare aisles, different crops, tall walls, low ceilings and deeper drops
 cannot become connectors. The closing leg returns through the same checked
 crop graph, including detours around obstacles. Straight runs keep only their
 endpoints, including runs crossing one-block terraces; the controller handles
-those jumps along the run. Essential obstacle bends are retained even when
-that needs more than 15 points. Irregular beds can require retracing crop tiles.
+those jumps along the run. Detours prefer fewer turns over slightly shorter
+zigzags. **Newly generated loops never exceed 15 waypoints.** If obstacle bends
+exceed the budget, the planner retries fewer passes, keeping every required
+turn. If even one pass cannot form a safe compact loop, generation fails and
+keeps the previous route. Irregular beds can require retracing crop tiles.
 
 Every tile along the saved loop has a **two-row crop buffer in all horizontal
 directions**, including turns and the return leg. Border rows, narrow aisles
@@ -25,8 +28,8 @@ the sweep. Lane spacing favors long runs and a small waypoint list; six passes
 do not guarantee harvesting every planted tile of a very wide farm per lap.
 
 Scanning and route construction run in small main-thread tick slices (up to
-64 work items or about 6 ms per slice). Up to 32,768 reachable crop tiles and
-65,536 generated waypoints are supported. A scan touching unloaded chunks or
+64 work items or about 6 ms per slice). Up to 32,768 reachable crop tiles are
+supported; older larger saved routes remain readable. A scan touching unloaded chunks or
 exceeding the limit fails instead of saving an incomplete loop. Failed or
 canceled generation keeps your previous route. `/af status` shows progress;
 `/af stop` cancels. Generating does not move the player or start farming.

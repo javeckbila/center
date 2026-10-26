@@ -2,6 +2,7 @@
 // reversible and checked for the player's full collision box by the reader.
 const MAX_CELLS = 32768;
 const MAX_GENERATED_POINTS = 65536;
+const WAYPOINT_BUDGET = 15;
 const SWEEP_MARGIN = 2;
 const cropTileKey = p => p.x + "," + p.cy + "," + p.z;
 const DIRECTIONS = [[0, 1], [1, 0], [0, -1], [-1, 0]];
@@ -22,12 +23,74 @@ function compress(walk) {
   return out;
 }
 
+// Search position + incoming heading. A plain tile BFS treats every shortest
+// staircase as equal to a long straight run. Minimize turns first, then length;
+// retain every checked grid edge rather than smoothing through walls/crop gaps.
+function createPathSearch(start, goal, neighbors) {
+  const heap = [], best = new Map(), discovered = new Set();
+  let done = !start, path = null;
+  const stateKey = n => cropTileKey(n.tile) + "/" + n.direction;
+  const before = (a, b) => a.turns < b.turns || a.turns === b.turns &&
+    (a.estimate < b.estimate || a.estimate === b.estimate && a.steps < b.steps);
+  function push(n) {
+    let i = heap.length; heap.push(n);
+    while (i > 0) {
+      const parent = Math.floor((i - 1) / 2);
+      if (!before(n, heap[parent])) break;
+      heap[i] = heap[parent]; i = parent;
+    }
+    heap[i] = n;
+  }
+  function pop() {
+    const first = heap[0], last = heap.pop();
+    if (heap.length) {
+      let i = 0;
+      while (i * 2 + 1 < heap.length) {
+        let child = i * 2 + 1;
+        if (child + 1 < heap.length && before(heap[child + 1], heap[child])) child++;
+        if (!before(heap[child], last)) break;
+        heap[i] = heap[child]; i = child;
+      }
+      heap[i] = last;
+    }
+    return first;
+  }
+  function add(tile, direction, turns, steps, parent) {
+    const n = { tile, direction, turns, steps, parent, estimate: steps + Math.abs(tile.x - goal.x) + Math.abs(tile.z - goal.z) };
+    const id = stateKey(n), old = best.get(id);
+    if (old && (old.turns < turns || old.turns === turns && old.steps <= steps)) return;
+    best.set(id, n); discovered.add(cropTileKey(tile)); push(n);
+  }
+  if (start) add(start, -1, 0, 0, null);
+  function step(budget, milliseconds) {
+    const deadline = milliseconds ? Date.now() + milliseconds : Infinity;
+    for (let work = 0; work < (budget || 64) && !done && Date.now() < deadline; work++) {
+      if (!heap.length || discovered.size > MAX_CELLS) { done = true; break; }
+      const n = pop();
+      if (best.get(stateKey(n)) !== n) continue;
+      if (cropTileKey(n.tile) === cropTileKey(goal) && Math.abs(n.tile.y - goal.y) < 0.1) {
+        path = []; let at = n;
+        while (at) { path.push(at.tile); at = at.parent; }
+        path.reverse(); done = true; break;
+      }
+      neighbors(n.tile).forEach(tile => {
+        const direction = DIRECTIONS.findIndex(d => tile.x - n.tile.x === d[0] && tile.z - n.tile.z === d[1]);
+        if (direction < 0) return;
+        add(tile, direction, n.turns + (n.direction >= 0 && n.direction !== direction ? 1 : 0), n.steps + 1, n);
+      });
+    }
+    return { done, path };
+  }
+  return { step };
+}
+
 function createGenerator(reader, context) {
   const seed = reader.seed;
   const nodes = new Map(), columns = new Map(), queue = [], interior = new Set();
   let cursor = 0, phase = "scan", error = null, result = null;
   let current = null, walk = [], search = null, targets = [], targetIndex = 0;
   let nearest = null, nearestDistance = Infinity, component = [], componentSet = new Set();
+  let passLimit = 6;
   if (!seed) { phase = "failed"; error = "Stand on a supported crop with clear headroom before generating."; }
   else addNode(seed);
 
@@ -39,10 +102,12 @@ function createGenerator(reader, context) {
     columns.get(column).push(tile);
   }
   function beginSearch() {
-    search = { queue: [current], cursor: 0, parents: new Map([[current, null]]), goal: targets[targetIndex] };
+    search = createPathSearch(nodes.get(current).tile, nodes.get(targets[targetIndex]).tile,
+      tile => nodes.get(cropTileKey(tile)).edges.filter(id => componentSet.has(id)).map(id => nodes.get(id).tile));
     phase = "search";
   }
   function planLanes() {
+    targets = []; walk = [];
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     component.forEach(id => {
       const t = nodes.get(id).tile;
@@ -57,9 +122,9 @@ function createGenerator(reader, context) {
       rows.get(t[across]).push(id);
     });
     const coordinates = Array.from(rows.keys()).sort((a, b) => a - b);
-    const passes = Math.min(6, coordinates.length);
+    const passes = Math.min(passLimit, coordinates.length);
     // Six long harvesting passes give about twelve turns on an open plot.
-    // Obstacles may add essential bends; never drop those to meet a count.
+    // Retry fewer passes when essential bends exceed the waypoint budget.
     for (let i = 0; i < passes; i++) {
       const row = rows.get(coordinates[passes === 1 ? 0 : Math.round(i * (coordinates.length - 1) / (passes - 1))]);
       row.sort((a, b) => nodes.get(a).tile[along] - nodes.get(b).tile[along]);
@@ -79,7 +144,10 @@ function createGenerator(reader, context) {
       if ((a.x === b.x && b.x === c.x && (b.z - a.z) * (c.z - b.z) > 0) ||
           (a.z === b.z && b.z === c.z && (b.x - a.x) * (c.x - b.x) > 0)) points.pop();
     }
-    if (points.length > MAX_GENERATED_POINTS) return fail("Generated route exceeds the waypoint limit.");
+    if (points.length > WAYPOINT_BUDGET) {
+      if (passLimit > 1) { passLimit--; planLanes(); return; }
+      return fail("Cannot connect these crops safely within " + WAYPOINT_BUDGET + " waypoints. Previous route kept.");
+    }
     result = { context, crop: reader.crop, points };
     phase = "done";
   }
@@ -126,18 +194,14 @@ function createGenerator(reader, context) {
           if (interior.has(id) && !componentSet.has(id)) { componentSet.add(id); component.push(id); }
         });
       } else if (phase === "search") {
-        if (search.cursor === search.queue.length) { fail("Unable to close a crop-only loop."); break; }
-        const id = search.queue[search.cursor++];
-        if (id === search.goal) {
-          const path = []; let at = id;
-          while (search.parents.get(at) !== null) { path.push(at); at = search.parents.get(at); }
-          search.path = path.reverse(); search.cursor = 0; phase = "bridge";
-        } else nodes.get(id).edges.forEach(next => {
-          if (componentSet.has(next) && !search.parents.has(next)) { search.parents.set(next, id); search.queue.push(next); }
-        });
+        const found = search.step(1);
+        if (found.done) {
+          if (!found.path) { fail("Unable to close a crop-only loop."); break; }
+          search = { path: found.path.slice(1), cursor: 0 }; phase = "bridge";
+        }
       } else if (phase === "bridge") {
         if (search.cursor < search.path.length) {
-          current = search.path[search.cursor++]; walk.push(nodes.get(current).tile);
+          const tile = search.path[search.cursor++]; current = cropTileKey(tile); walk.push(tile);
         } else if (++targetIndex === targets.length) finish(); else beginSearch();
       }
     }
@@ -149,32 +213,23 @@ function createGenerator(reader, context) {
 // Join a saved loop through the crop graph, without a straight shortcut
 // through a wall. This search is also stepped by the arming tick.
 function createJoin(reader, goal) {
-  const queue = reader.seed ? [reader.seed] : [], parents = new Map();
-  if (reader.seed) parents.set(cropTileKey(reader.seed), null);
-  let cursor = 0, done = false, path = null;
-  function step(budget, milliseconds) {
-    const deadline = milliseconds ? Date.now() + milliseconds : Infinity;
-    for (let i = 0; i < (budget || 64) && cursor < queue.length && !done && Date.now() < deadline; i++) {
-      const a = queue[cursor++];
-      if (Math.abs(a.x + 0.5 - goal.x) < 0.01 && Math.abs(a.z + 0.5 - goal.z) < 0.01 && Math.abs(a.y - goal.y) < 0.1) {
-        path = []; let at = a;
-        while (at) { path.push(at); at = parents.get(cropTileKey(at)); }
-        path = compress(path.reverse()); done = true; break;
+  const destination = { x: Math.floor(goal.x), cy: Math.floor(goal.y + 0.1), z: Math.floor(goal.z), y: goal.y };
+  const search = createPathSearch(reader.seed, destination, a => {
+    const adjacent = [];
+    DIRECTIONS.forEach(d => {
+      for (let dy = -1; dy <= 1; dy++) {
+        const b = reader.tile(a.x + d[0], a.cy + dy, a.z + d[1]);
+        if (b && reader.edge(a, b)) adjacent.push(b);
       }
-      DIRECTIONS.forEach(d => {
-        for (let dy = -1; dy <= 1; dy++) {
-          const b = reader.tile(a.x + d[0], a.cy + dy, a.z + d[1]);
-          if (b && !parents.has(cropTileKey(b)) && reader.edge(a, b)) {
-            parents.set(cropTileKey(b), a); queue.push(b);
-          }
-        }
-      });
-      if (queue.length > MAX_CELLS || reader.unloaded()) done = true;
-    }
-    if (cursor === queue.length) done = true;
-    return { done, path };
+    });
+    return adjacent;
+  });
+  function step(budget, milliseconds) {
+    const state = search.step(budget, milliseconds);
+    if (reader.unloaded()) return { done: true, path: null };
+    return { done: state.done, path: state.path ? compress(state.path) : null };
   }
   return { step };
 }
 
-module.exports = { createGenerator, createJoin, compress, MAX_CELLS, MAX_GENERATED_POINTS };
+module.exports = { createGenerator, createJoin, createPathSearch, compress, MAX_CELLS, MAX_GENERATED_POINTS, WAYPOINT_BUDGET };
