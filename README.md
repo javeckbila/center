@@ -22,7 +22,13 @@ If loaded before that restart, Center and its automations remain available
 with your normal view. A reminder appears on the first automation start;
 pause on lost focus is still disabled for the run and restored on stop.
 
-Personal settings and routes are stored in the uncommitted `config.json`.
+Personal settings, HUD positions, routes, and named farm configs are stored in
+`config/ChatTriggers/center/config.json`, relative to the Minecraft game folder.
+This is outside `modules`, so deleting or reinstalling Center preserves them.
+On the first load after updating, Center automatically copies the old
+`modules/center/config.json` here if the new file does not already exist.
+The old file is kept as a backup; future changes save only to the new location.
+Run `/ct load` after updating to migrate before deleting the module.
 See [Auto Farm](features/auto-farm/README.md) for waypoint and config commands.
 
 ## Auto Miner player avoidance

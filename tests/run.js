@@ -11,9 +11,16 @@ function ok(v, msg) { if (!v) throw new Error(msg || "expected truthy"); }
 
 // ---------- CT mocks ----------
 var files = { "center/metadata.json": String(readFile(environment["user.dir"] + "/center/metadata.json")) };
+var CONFIG_PATH = "./config/ChatTriggers/center/config.json";
 var FileLib = {
-  read: function (m, f) { var k = m + "/" + f; return files.hasOwnProperty(k) ? files[k] : null; },
-  write: function (m, f, c) { files[m + "/" + f] = c; },
+  exists: function (path) { return files.hasOwnProperty(path); },
+  read: function (m, f) { var k = arguments.length === 1 ? m : m + "/" + f; return files.hasOwnProperty(k) ? files[k] : null; },
+  write: function (path, content, recursive) {
+    eq(arguments.length, 3, "external path write overload");
+    eq(path, CONFIG_PATH, "settings saved outside modules");
+    eq(recursive, true, "creates config directory");
+    files[path] = content;
+  },
 };
 var triggers = [];
 function register(type, fn) {
@@ -349,7 +356,7 @@ test("open key closes the menu without the key poller reopening it", function ()
 
 test("settings and binds persist to config.json", function () {
   ST.markDirty(); ST.flush();
-  var saved = JSON.parse(files["center/config.json"]);
+  var saved = JSON.parse(files[CONFIG_PATH]);
   eq(saved.features["info-hud"].bind, 75);
   eq(saved.features["info-hud"].values.corner, undefined, "legacy corner removed");
   eq(saved.features["center"].values.openKey, 344);
@@ -527,7 +534,7 @@ test("scroll scales, arrows nudge, right-click resets", function () {
 test("positions persist; Done returns to the game", function () {
   dragHud(10, 10, 54, 104);
   ST.flush();
-  var saved = JSON.parse(files["center/config.json"]).features["info-hud"].hud;
+  var saved = JSON.parse(files[CONFIG_PATH]).features["info-hud"].hud;
   ok(saved && saved.ax === 0 && saved.dx === 50, "saved to config.json");
   edRender();
   var done = edFrame.texts.filter(function (t) { return t.s === "Done"; })[0];
@@ -563,7 +570,7 @@ test("disabled HUD modules can be previewed and moved without enabling them", fu
   E.onKey("\u0100", Keyboard.KEY_ESCAPE);
   eq(currentScreen, null);
   ST.flush();
-  ok(JSON.parse(files["center/config.json"]).features["info-hud"].hud, "disabled HUD position saved");
+  ok(JSON.parse(files[CONFIG_PATH]).features["info-hud"].hud, "disabled HUD position saved");
   var overlay = makeCtx(480, 270);
   fire("renderoverlay", overlay.ctx);
   ok(!overlay.texts.some(function (t) { return t.s === "XYZ"; }), "preview disappears outside the editor");
@@ -772,7 +779,7 @@ test("auto farm loads disabled, uses center settings and saves waypoint commands
   fireCommand("auto-farm", "add");
   mc.player.z = 4.5; fireCommand("auto-farm", "add");
   mc.player.z = 8.5; fireCommand("auto-farm", "add");
-  var saved = JSON.parse(files["center/config.json"]).features["auto-farm"].route;
+  var saved = JSON.parse(files[CONFIG_PATH]).features["auto-farm"].route;
   eq(saved.points.length, 3); ok(saved.context.indexOf("example.test") >= 0);
   fireCommand("auto-farm", "remove", "2");
   eq(ST.entry("auto-farm").route.points[1].z, 8.5, "numbered remove renumbers");
@@ -794,9 +801,9 @@ test("saved chams render while disabled, honor visibility and hide in another di
 
 test("Auto Farm saves settings immediately and named configs restore routes without starting farming", function () {
   farmFeature.set("pitch", 37);
-  eq(JSON.parse(files["center/config.json"]).features["auto-farm"].values.pitch, 37, "setting saved immediately");
+  eq(JSON.parse(files[CONFIG_PATH]).features["auto-farm"].values.pitch, 37, "setting saved immediately");
   fireCommand("auto-farm", "save", "wheat");
-  var disk = JSON.parse(files["center/config.json"]).features["auto-farm"];
+  var disk = JSON.parse(files[CONFIG_PATH]).features["auto-farm"];
   eq(disk.profiles.length, 1); eq(disk.profiles[0].name, "wheat");
   eq(disk.profiles[0].route.points.length, 2); eq(disk.profiles[0].values.pitch, 37);
   fireCommand("auto-farm", "clear"); farmFeature.set("pitch", 10);
@@ -881,7 +888,7 @@ test("crop generation commands keep the old route on failure, cancellation and w
   var generatedRoute = ST.entry("auto-farm").route;
   eq(generatedRoute.crop, "minecraft:wheat"); ok(generatedRoute.points.length >= 2);
   ok(!farmFeature.isEnabled(), "generation does not start the macro");
-  eq(JSON.parse(files["center/config.json"]).features["auto-farm"].route.crop, "minecraft:wheat", "saved to disk");
+  eq(JSON.parse(files[CONFIG_PATH]).features["auto-farm"].route.crop, "minecraft:wheat", "saved to disk");
   fireCommand("auto-farm", "save", "generated"); fireCommand("auto-farm", "clear");
   fireCommand("auto-farm", "load", "generated");
   eq(ST.entry("auto-farm").route.crop, "minecraft:wheat", "profile restores generated-route validation");

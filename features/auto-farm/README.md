@@ -97,7 +97,10 @@ numbers, underscores or hyphens; up to 32 configs are saved. Each snapshot
 keeps its route's server/save and dimension. Loading never starts the macro.
 Toggle keys and HUD position remain your shared Auto Farm preferences.
 
-Routes and settings are stored in the user's uncommitted `config.json`.
+Routes, settings, and named configs are stored outside the module in
+`config/ChatTriggers/center/config.json` (relative to the Minecraft game folder),
+so deleting or reinstalling Center preserves them. Existing module-local
+configs migrate automatically on load after updating.
 Changes to settings and named saves are written immediately and survive reloads.
 Routes are bound to their server or singleplayer save and dimension. Clear
 the route before recording in a different world. Farming always loads off.

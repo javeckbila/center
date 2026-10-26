@@ -1,13 +1,19 @@
 // Persistent config shared by the menu and every registered module.
 // Layout: { features: { [id]: { enabled, bind, values: { [key]: value } } } }
 const MODULE = "center";
-const FILE = "config.json";
+// Outside modules so /ct delete and reinstalling Center preserve user data.
+const FILE = "./config/ChatTriggers/center/config.json";
+let dirty = false;
 
 function read() {
   try {
-    const raw = FileLib.read(MODULE, FILE);
+    const migrate = !FileLib.exists(FILE);
+    const raw = migrate ? FileLib.read(MODULE, "config.json") : FileLib.read(FILE);
     const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === "object" ? parsed : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    // Save a valid legacy config immediately, without waiting for a setting edit.
+    if (migrate && raw) dirty = true;
+    return parsed;
   } catch (error) {
     console.warn(`[center] ${FILE} is unreadable, using defaults: ${error}`);
     return {};
@@ -16,7 +22,6 @@ function read() {
 
 const data = read();
 if (!data.features || typeof data.features !== "object") data.features = {};
-let dirty = false;
 
 function entry(id) {
   let item = data.features[id];
@@ -31,11 +36,13 @@ function flush() {
   if (!dirty) return;
   dirty = false;
   try {
-    FileLib.write(MODULE, FILE, JSON.stringify(data, null, 2), true);
+    FileLib.write(FILE, JSON.stringify(data, null, 2), true);
   } catch (error) {
     dirty = true;
     console.error(`[center] Could not save ${FILE}: ${error}`);
   }
 }
+
+flush();
 
 module.exports = { MODULE, entry, markDirty, flush };

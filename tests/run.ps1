@@ -9,7 +9,7 @@ if (-not (Test-Path $rhino)) {
     Push-Location $work
     try { tar -xf $ctJar "META-INF/jars/rhino-7c7c509668.jar" } finally { Pop-Location }
 }
-$suites = @("center/tests/run.js", "center/tests/auto-miner.js", "center/tests/auto-farm.js", "center/tests/perspective.js")
+$suites = @("center/tests/store.js", "center/tests/run.js", "center/tests/auto-miner.js", "center/tests/auto-farm.js", "center/tests/perspective.js")
 $modules = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $failed = 0
 Push-Location $modules
