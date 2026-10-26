@@ -4,7 +4,8 @@ const G = require("./geometry");
 const { createWorld } = require("./world");
 
 const INPUTS = ["keyUp", "keyDown", "keyLeft", "keyRight", "keyJump", "keySprint", "keyAttack"];
-const ARRIVAL = 0.45;
+const ARRIVAL = 0.6;
+const BRAKE_DISTANCE = 2;
 const STUCK_SECONDS = 4;
 
 function createFarmer(deps) {
@@ -14,9 +15,9 @@ function createFarmer(deps) {
   let route = null, target = 0, laps = 0;
   let activeGame = null, activePlayer = null, activeLevel = null;
   let inventory = null, oldSlot = -1, hoeSlot = -1;
-  let lastFrame = 0, sweep = 0, sweepOffset = 0, lastJump = -Infinity;
+  let lastFrame = 0, sweep = 0, sweepWidth = 0, lastJump = -Infinity;
   let bestDistance = Infinity, lastProgress = 0, airborneSince = null, previous = null;
-  let jumpHeld = false, heading = null;
+  let jumpHeld = false, heading = 0, legHeading = 0;
 
   function writeBinding(binding, down) {
     if (binding.isDown() === down) return;
@@ -88,8 +89,10 @@ function createFarmer(deps) {
     hoeSlot = inventory.getSelectedSlot();
     route = saved;
     target = laps = 0;
-    sweep = sweepOffset = 0;
-    heading = null;
+    sweep = sweepWidth = 0;
+    heading = game.player.getYRot();
+    legHeading = heading;
+    setLegHeading({ x: game.player.getX(), z: game.player.getZ() });
     bestDistance = Infinity;
     lastProgress = lastFrame = now;
     lastJump = -Infinity;
@@ -109,11 +112,20 @@ function createFarmer(deps) {
     return null;
   }
 
+  function setLegHeading(from) {
+    const goal = route.points[target];
+    const dx = goal.x - from.x, dz = goal.z - from.z;
+    if (G.length(dx, dz) > 0.001) legHeading = G.bearing(dx, dz);
+  }
+
   function move(game, jumping) {
     const p = game.player, goal = route.points[target];
     const names = G.steering(goal.x - p.getX(), goal.z - p.getZ(), p.getYRot());
     ["keyUp", "keyDown", "keyLeft", "keyRight"].forEach(name => setInput(game, name, names.indexOf(name) >= 0));
-    setInput(game, "keySprint", deps.setting("sprint") && names.indexOf("keyUp") >= 0);
+    const nearWaypoint = G.length(goal.x - p.getX(), goal.z - p.getZ()) < BRAKE_DISTANCE;
+    setInput(game, "keySprint", deps.setting("sprint") && !nearWaypoint && names.indexOf("keyUp") >= 0);
+    // Releasing the sprint binding alone does not cancel vanilla's sprint latch.
+    if (nearWaypoint && p.isSprinting()) p.setSprinting(false);
     setInput(game, "keyJump", jumping);
     return G.travel(names, p.getYRot());
   }
@@ -133,6 +145,7 @@ function createFarmer(deps) {
     if (previous && (G.length(position.x - previous.x, position.z - previous.z) > 6 || Math.abs(position.y - previous.y) > 4)) {
       return halt("Player teleported.");
     }
+    const lastPosition = previous;
     previous = position;
     if (!W.selectHoe(p)) return halt("No usable hoe left in the hotbar.");
     hoeSlot = inventory.getSelectedSlot();
@@ -144,9 +157,13 @@ function createFarmer(deps) {
 
     const goal = route.points[target];
     const distance = G.length(goal.x - p.getX(), goal.z - p.getZ());
-    if (distance <= ARRIVAL && Math.abs(goal.y - p.getY()) <= 0.6) {
+    const arrivalDistance = lastPosition ? G.segmentDistance(goal, lastPosition, position) : distance;
+    if (arrivalDistance <= ARRIVAL && Math.abs(goal.y - p.getY()) <= 0.6) {
       if (target === route.points.length - 1) laps++;
       target = (target + 1) % route.points.length;
+      // Keep the camera centered on the route leg, not a bearing which can
+      // reverse by 180 degrees as the player passes close to the endpoint.
+      setLegHeading(goal);
       bestDistance = Infinity;
       lastProgress = now;
     } else if (distance < bestDistance - 0.1) {
@@ -183,13 +200,13 @@ function createFarmer(deps) {
     const now = deps.now();
     const dt = G.clamp(now - lastFrame, 0, 0.1);
     lastFrame = now;
-    sweep += dt * Math.PI * 2 / deps.setting("sweepPeriod");
-    const p = game.player, goal = route.points[target];
-    const desiredHeading = G.bearing(goal.x - p.getX(), goal.z - p.getZ());
-    heading = G.approach(heading === null ? p.getYRot() : heading, desiredHeading, 160 * dt);
-    // Ease sweep amplitude in on start, preventing an abrupt initial turn.
-    sweepOffset += (Math.sin(sweep) * deps.setting("sweepWidth") - sweepOffset) * Math.min(1, dt * 8);
-    p.setYRot(G.approach(p.getYRot(), heading + sweepOffset, 180 * dt));
+    sweep = (sweep + dt * Math.PI / deps.setting("sweepTime")) % (Math.PI * 2);
+    const p = game.player;
+    heading = G.approach(heading, legHeading, 240 * dt);
+    // Smooth only the amplitude. Filtering/rate-limiting the oscillator itself
+    // distorts fast sweeps, so its left/right timing must remain analytic.
+    sweepWidth += (deps.setting("sweepWidth") - sweepWidth) * (1 - Math.exp(-dt * 12));
+    p.setYRot(heading + Math.sin(sweep) * sweepWidth);
     p.setXRot(p.getXRot() + G.clamp(deps.setting("pitch") - p.getXRot(), -90 * dt, 90 * dt));
     move(game, jumpHeld);
   }

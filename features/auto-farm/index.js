@@ -16,6 +16,14 @@ const PREFIX = "&8[&bAuto Farm&8]&r ";
 const SUBCOMMANDS = ["add", "remove", "clear", "start", "stop", "toggle", "status", "list", "help"];
 const Clock = Java.type("java.lang.System");
 const say = text => ChatLib.chat(PREFIX + text);
+// Older versions stored the time for a full cycle; the menu now describes a
+// single side-to-side pass. Preserve explicit saved timing in the new units.
+const savedValues = store.entry(ID).values;
+if (savedValues.sweepTime === undefined && typeof savedValues.sweepPeriod === "number" && isFinite(savedValues.sweepPeriod)) {
+  savedValues.sweepTime = savedValues.sweepPeriod / 2;
+  delete savedValues.sweepPeriod;
+  store.markDirty();
+}
 const route = createRoute(store.entry(ID).route, saved => {
   store.entry(ID).route = saved;
   store.markDirty();
@@ -148,8 +156,8 @@ module.exports = registry.defineFeature({
       description: "Downward camera angle. 0 is level; 90 looks straight down." },
     { type: "slider", key: "sweepWidth", name: "Sweep width", min: 10, max: 80, step: 1, default: 45, unit: "deg",
       description: "How far the camera looks to each side of the route direction." },
-    { type: "slider", key: "sweepPeriod", name: "Sweep period", min: 1, max: 6, step: 0.25, default: 2.5, unit: "s",
-      description: "Time for a complete left-to-right-and-back camera sweep." },
+    { type: "slider", key: "sweepTime", name: "Sweep time", min: 0.25, max: 3, step: 0.05, default: 0.5, unit: "s",
+      description: "Time to sweep from one side to the other. Default 0.5 seconds; a full back-and-forth takes twice this." },
     { type: "toggle", key: "sprint", name: "Sprint", default: true },
     { type: "toggle", key: "showWaypoints", name: "Waypoint chams", default: true,
       description: "Numbered translucent boxes through walls, visible even while farming is off. Gold marks the next waypoint." },

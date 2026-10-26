@@ -12,7 +12,7 @@ var MOCKF = require("center/tests/mock-farm-world");
 function harness(points) {
   var w = MOCKF.createFarmWorld({});
   w.floor();
-  var settings = { pitch: 20, sweepWidth: 45, sweepPeriod: 2.5, sprint: true };
+  var settings = { pitch: 20, sweepWidth: 45, sweepTime: 0.5, sprint: true };
   var saved = { context: "farm", points: points || [{ x: 0.5, y: 64, z: 0.5 }, { x: 0.5, y: 64, z: 6.5 }] };
   var halts = [];
   var starts = 0;
@@ -85,6 +85,20 @@ test("steering advances toward the goal at every yaw including wraparound", func
   eq(Math.round(GEO.approach(179, -179, 1)), 180, "short yaw arc");
 });
 
+test("steering uses vanilla left/right keys at each cardinal yaw", function () {
+  // Independent expected keys, rather than comparing two copies of the same
+  // transform. Vanilla positive local X comes from keyLeft, not keyRight.
+  eq(GEO.steering(1, 0, 0).join(","), "keyLeft", "east while facing south");
+  eq(GEO.steering(-1, 0, 0).join(","), "keyRight", "west while facing south");
+  eq(GEO.steering(0, 1, 90).join(","), "keyLeft", "south while facing west");
+  eq(GEO.steering(1, 0, 180).join(","), "keyRight", "east while facing north");
+  eq(GEO.steering(0, 1, -90).join(","), "keyRight", "south while facing east");
+  var w = MOCKF.createFarmWorld({}); w.floor();
+  w.game.options.keyRight.down = true;
+  w.walkFarm();
+  ok(w.player.x < 0.5, "right actually moves west at yaw 0");
+});
+
 test("start waits for chat, selects a hotbar hoe, and restores the old slot on stop", function () {
   var h = harness(); h.w.gui = true;
   ok(!h.begin()); eq(h.w.selectedSlot, 0);
@@ -123,11 +137,73 @@ test("pitch setting changes smoothly and the sweep reaches both sides on a strai
   var min = Infinity, max = -Infinity, previousYaw = h.w.player.yaw;
   for (var i = 0; i < 65; i++) {
     h.cycle(); min = Math.min(min, h.w.player.yaw); max = Math.max(max, h.w.player.yaw);
-    ok(Math.abs(GEO.wrap(h.w.player.yaw - previousYaw)) <= 9.01, "bounded camera speed");
+    ok(Math.abs(GEO.wrap(h.w.player.yaw - previousYaw)) <= 15, "bounded camera speed");
     previousYaw = h.w.player.yaw;
   }
   ok(min < -30 && max > 30, "sweeps left and right: " + min + ", " + max);
   ok(Math.abs(h.w.player.pitch - 35) < 0.01);
+});
+
+test("default sweep reaches opposite sides half a second apart without amplitude clipping", function () {
+  var h = harness([{ x: 0.5, y: 64, z: 10.5 }, { x: 0.5, y: 64, z: 0.5 }]);
+  ok(h.begin());
+  var samples = {};
+  for (var i = 1; i <= 100; i++) {
+    h.w.advance(); h.farmer.frame();
+    if (i === 20 || i === 40 || i === 60 || i === 80 || i === 100) samples[i] = h.w.player.yaw;
+  }
+  ok(samples[20] > 40, "first right peak at 0.25s");
+  ok(Math.abs(samples[40]) < 0.01, "center at 0.5s");
+  ok(samples[60] < -44, "left peak at 0.75s, half a second later");
+  ok(Math.abs(samples[80]) < 0.01, "center at 1s");
+  ok(samples[100] > 44, "next right peak at 1.25s");
+});
+
+test("camera does not chase a reversing point bearing near the endpoint", function () {
+  var h = harness([{ x: 0.5, y: 64, z: 6.5 }, { x: 0.5, y: 64, z: 0.5 }]);
+  ok(h.begin());
+  for (var i = 0; i < 120; i++) {
+    // Cross back and forth within 5cm of the point without running arrival
+    // ticks. The camera must retain the north/south leg's sweep center.
+    h.w.player.x = 0.5 + Math.sin(i) * 0.05;
+    h.w.player.z = 6.5 + Math.cos(i) * 0.05;
+    h.w.advance(); h.farmer.frame();
+    ok(Math.abs(h.w.player.yaw) <= 45.01, "stable leg heading near waypoint");
+  }
+});
+
+test("arrival catches a waypoint crossed between ticks and brakes sprint on approach", function () {
+  var h = harness([{ x: 0.5, y: 64, z: 3.5 }, { x: 0.5, y: 64, z: 8.5 }]);
+  ok(h.begin());
+  h.w.player.z = 2.7; h.w.sprinting = true; h.cycle();
+  eq(h.w.sprinting, false, "vanilla sprint latch canceled near point");
+  eq(h.w.game.options.keySprint.down, false);
+  eq(h.farmer.state().target, 0);
+  h.w.player.z = 4.3; h.cycle();
+  eq(h.farmer.state().target, 1, "crossed waypoint recognized without circling back");
+});
+
+test("tight diagonal routes keep completing with momentum and different frame rates", function () {
+  [30, 60, 144].forEach(fps => {
+    var h = harness([
+      { x: 0.27, y: 64, z: 0.83 },
+      { x: -3.79, y: 64, z: 7.47 },
+      { x: 3.53, y: 64, z: 4.19 },
+      { x: 1.18, y: 64, z: -1.26 },
+    ]);
+    h.settings.sweepWidth = 80;
+    h.settings.sweepTime = 0.25;
+    ok(h.begin());
+    var nextFrame = h.w.clock, nextTick = h.w.clock;
+    for (var elapsed = 0; elapsed < 35 && h.farmer.state().running; elapsed += 1 / fps) {
+      nextFrame += 1 / fps; h.w.clock = nextFrame; h.farmer.frame();
+      while (nextTick + 0.05 <= nextFrame + 0.000001 && h.farmer.state().running) {
+        nextTick += 0.05; h.farmer.tick(); h.w.walkFarm();
+      }
+    }
+    ok(h.farmer.state().running, fps + " fps: " + h.halts.join(", "));
+    ok(h.farmer.state().laps >= 3, "multiple loops at " + fps + " fps");
+  });
 });
 
 test("jump is requested before colliding with a one-block obstacle", function () {

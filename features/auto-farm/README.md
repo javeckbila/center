@@ -18,11 +18,17 @@ not find detours around walls.
 | `/af help` | Show command help. |
 
 `/auto-farm` and `/autofarm` are aliases. In **/center → Automation → Auto Farm**,
-configure the downward **Look pitch** (default 20°), sweep width, sweep period,
+configure the downward **Look pitch** (default 20°), sweep width, sweep time,
 sprint, waypoint chams, HUD and toggle key. Move or scale the HUD with
 `/center hud`. Waypoints appear as translucent numbered boxes through walls;
 the next waypoint is gold. Markers within 256 blocks remain visible while
-farming is off.
+farming is off. **Sweep time** defaults to **0.5 seconds from one side to the
+other** (one second for a complete back-and-forth). Existing full-cycle timing
+settings are converted automatically to these units.
+
+The sweep stays centered on each route segment. Movement compensates for the
+camera angle, slows out of sprint near endpoints, and recognizes waypoints
+crossed between ticks so it can continue into the next segment.
 
 Routes and settings are stored in the user's uncommitted `config.json`.
 Routes are bound to their server or singleplayer save and dimension. Clear

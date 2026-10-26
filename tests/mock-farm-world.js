@@ -29,6 +29,9 @@ function createFarmWorld(options) {
   p.isInLava = () => w.lava;
   w.motion = { x: 0, y: 0, z: 0 };
   p.getDeltaMovement = () => w.motion;
+  w.sprinting = false;
+  p.isSprinting = () => w.sprinting;
+  p.setSprinting = value => { w.sprinting = value; };
   w.dimension = "minecraft:overworld";
   game.level.dimension = () => ({ identifier: () => w.dimension });
   w.loadedChunks = true;
@@ -66,11 +69,13 @@ function createFarmWorld(options) {
   w.walkFarm = function () {
     const opts = game.options;
     const forward = Number(opts.keyUp.down) - Number(opts.keyDown.down);
-    const right = Number(opts.keyRight.down) - Number(opts.keyLeft.down);
+    // Verified against KeyboardInput + Entity.getInputVector: left is +X.
+    const left = Number(opts.keyLeft.down) - Number(opts.keyRight.down);
     const radians = p.yaw * Math.PI / 180;
-    const speed = (opts.keySprint.down ? 0.28 : 0.215) / Math.max(1, Math.sqrt(forward * forward + right * right));
-    const dx = (-Math.sin(radians) * forward + Math.cos(radians) * right) * speed;
-    const dz = (Math.cos(radians) * forward + Math.sin(radians) * right) * speed;
+    const speed = (opts.keySprint.down ? 0.28 : 0.215) / Math.max(1, Math.sqrt(forward * forward + left * left));
+    const drag = w.grounded ? 0.55 : 0.91;
+    const dx = w.motion.x * drag + (-Math.sin(radians) * forward + Math.cos(radians) * left) * speed * (1 - drag);
+    const dz = w.motion.z * drag + (Math.cos(radians) * forward + Math.sin(radians) * left) * speed * (1 - drag);
     if (w.grounded && opts.keyJump.down) { w.motion.y = 0.42; w.grounded = false; }
     let dy = w.motion.y;
     if (game.level.noCollision(p, p.getBoundingBox().move(dx, 0, dz))) { p.x += dx; p.z += dz; }

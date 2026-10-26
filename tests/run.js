@@ -131,7 +131,7 @@ function makeCtx(w, h) {
 files["center/config.json"] = JSON.stringify({ features: {
   "info-hud": { values: { corner: "Bottom right" } },
   "auto-miner": { enabled: true, values: {} },
-  "auto-farm": { enabled: true, values: {} },
+  "auto-farm": { enabled: true, values: { sweepPeriod: 1 } },
 } });
 files["auto-miner/settings.json"] = JSON.stringify({ glide: 1.5, hud: false });
 var center = require("center/index");
@@ -728,6 +728,8 @@ test("auto farm loads disabled, uses center settings and saves waypoint commands
   frames();
   ok(farmFeature && !farmFeature.isEnabled());
   eq(farmFeature.get("pitch"), 20); eq(farmFeature.category, "Automation");
+  eq(farmFeature.get("sweepTime"), 0.5, "old full period converted to side-to-side time");
+  eq(ST.entry("auto-farm").values.sweepPeriod, undefined, "obsolete setting migrated");
   fireCommand("auto-farm", "clear");
   mc.player.x = 0.5; mc.player.y = 64; mc.player.z = 0.5;
   fireCommand("auto-farm", "add");
@@ -792,7 +794,7 @@ test("Auto Farm menu exposes a working pitch slider and the sweep controls", fun
   SC.open(); frames(); render();
   click(findText("Automation").x + 2, findText("Automation").y + 2);
   click(CARD_X + 40, cardY("Auto Farm") + 10);
-  ok(hasText("Look pitch") && hasText("Sweep width") && hasText("Sweep period"));
+  ok(hasText("Look pitch") && hasText("Sweep width") && hasText("Sweep time"));
   click(RIGHT, rowY("Look pitch") + 11);
   eq(farmFeature.get("pitch"), 90, "pitch slider is connected to feature settings");
   farmFeature.set("pitch", 20);

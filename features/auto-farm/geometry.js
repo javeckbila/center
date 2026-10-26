@@ -13,19 +13,30 @@ function steering(dx, dz, yaw) {
   const keys = [];
   if (Math.abs(sector) <= 1) keys.push("keyUp");
   if (Math.abs(sector) >= 3) keys.push("keyDown");
-  if (sector < 0 && sector > -4) keys.push("keyRight");
-  if (sector > 0 && sector < 4) keys.push("keyLeft");
+  // Vanilla's positive strafe impulse is LEFT (KeyboardInput.calculateImpulse).
+  // At yaw 0, left moves east (+X), while right moves west (-X).
+  if (sector < 0 && sector > -4) keys.push("keyLeft");
+  if (sector > 0 && sector < 4) keys.push("keyRight");
   return keys;
 }
 
 function travel(keys, yaw) {
   const forward = (keys.indexOf("keyUp") >= 0 ? 1 : 0) - (keys.indexOf("keyDown") >= 0 ? 1 : 0);
-  const right = (keys.indexOf("keyRight") >= 0 ? 1 : 0) - (keys.indexOf("keyLeft") >= 0 ? 1 : 0);
+  const left = (keys.indexOf("keyLeft") >= 0 ? 1 : 0) - (keys.indexOf("keyRight") >= 0 ? 1 : 0);
   const radians = yaw * Math.PI / 180;
-  const x = -Math.sin(radians) * forward + Math.cos(radians) * right;
-  const z = Math.cos(radians) * forward + Math.sin(radians) * right;
+  const x = -Math.sin(radians) * forward + Math.cos(radians) * left;
+  const z = Math.cos(radians) * forward + Math.sin(radians) * left;
   const size = length(x, z) || 1;
   return { x: x / size, z: z / size };
 }
 
-module.exports = { clamp, length, wrap, bearing, approach, steering, travel };
+// Distance from a waypoint to the player's movement during the last tick.
+// This recognizes an arrival even if momentum carries the player past it.
+function segmentDistance(point, from, to) {
+  const dx = to.x - from.x, dz = to.z - from.z;
+  const size = dx * dx + dz * dz;
+  const t = size < 0.000001 ? 0 : clamp(((point.x - from.x) * dx + (point.z - from.z) * dz) / size, 0, 1);
+  return length(point.x - from.x - dx * t, point.z - from.z - dz * t);
+}
+
+module.exports = { clamp, length, wrap, bearing, approach, steering, travel, segmentDistance };
