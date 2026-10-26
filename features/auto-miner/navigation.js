@@ -11,12 +11,13 @@ function steering(dx, dz, yaw) {
   if (length < 0.001) return [];
   const radians = yaw * Math.PI / 180;
   const forward = (-Math.sin(radians) * dx + Math.cos(radians) * dz) / length;
-  const right = (Math.cos(radians) * dx + Math.sin(radians) * dz) / length;
+  // Vanilla input's positive local X comes from LEFT, not right.
+  const left = (Math.cos(radians) * dx + Math.sin(radians) * dz) / length;
   const keys = [];
   if (forward > KEY_THRESHOLD) keys.push("keyUp");
   if (forward < -KEY_THRESHOLD) keys.push("keyDown");
-  if (right > KEY_THRESHOLD) keys.push("keyRight");
-  if (right < -KEY_THRESHOLD) keys.push("keyLeft");
+  if (left > KEY_THRESHOLD) keys.push("keyLeft");
+  if (left < -KEY_THRESHOLD) keys.push("keyRight");
   return keys;
 }
 

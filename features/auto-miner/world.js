@@ -139,6 +139,24 @@ function createWorld(T) {
     return true;
   }
 
+  // A short, one-block ascent: clear takeoff/headroom and a supported landing.
+  // Check the full box at the apex, including the extra height above the ledge.
+  function jumpable(game, from, to, floorY, landingY) {
+    const p = game.player;
+    const rise = landingY - floorY;
+    if (rise <= 0.15 || rise > 1.1 || Math.sqrt((to.x - from.x) ** 2 + (to.z - from.z) ** 2) > 1.4) return false;
+    if (!walkable(game, to, to, landingY)) return false;
+    const box = p.getBoundingBox();
+    const apex = floorY + 1.25;
+    for (let i = 0; i <= 10; i++) {
+      const lifted = box.move(from.x - p.getX(), floorY + 1.25 * i / 10 - p.getY(), from.z - p.getZ());
+      const across = box.move(from.x + (to.x - from.x) * i / 10 - p.getX(), apex - p.getY(),
+        from.z + (to.z - from.z) * i / 10 - p.getZ());
+      if (!game.level.noCollision(p, lifted) || !game.level.noCollision(p, across)) return false;
+    }
+    return true;
+  }
+
   // Tab-list latency of the local player in ms (0 when unknown).
   function latency(game) {
     const connection = game.getConnection();
@@ -147,7 +165,7 @@ function createWorld(T) {
   }
 
   return { blockPos, isTarget, cast, hits, inReach, visiblePoint, rayAt, cameraRay, holdsPickaxe, selectPickaxe, walkable, latency,
-    occupied, sidestep };
+    occupied, sidestep, jumpable };
 }
 
 module.exports = { createWorld };

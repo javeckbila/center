@@ -366,9 +366,11 @@ function createMiner(deps) {
   }
 
   function beginReturn(game, time) {
+    const directOnly = !!avoidance || !!(rec && rec.directOnly);
     avoidance = null;
     nextSidestep = time + SIDESTEP_COOLDOWN;
     pauseForWalk(game, time);
+    rec.directOnly = directOnly;
     setStatus("returning", "Returning to start");
   }
 
@@ -401,6 +403,7 @@ function createMiner(deps) {
       if (!avoidance.arrived || !occupied) avoidance.followSince = null;
       else if (avoidance.followSince === null) avoidance.followSince = time;
       if (time >= avoidance.returnAt ||
+        G.hypot(game.player.getX() - anchor.x, game.player.getZ() - anchor.z) > 1.15 ||
         (avoidance.clearSince !== null && time - avoidance.clearSince >= CLEAR_SECONDS) ||
         (avoidance.followSince !== null && time - avoidance.followSince >= FOLLOW_SECONDS) ||
         (!rec && (displaced(game.player) || !game.player.onGround()))) beginReturn(game, time);
@@ -410,6 +413,7 @@ function createMiner(deps) {
       if (spot) {
         avoidance = { spot, arrived: false, returnAt: time + SIDESTEP_SECONDS, clearSince: null, followSince: null };
         pauseForWalk(game, time);
+        rec.directOnly = true;
       }
     }
   }

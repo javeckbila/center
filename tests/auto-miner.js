@@ -123,7 +123,7 @@ test("return navigation detours around a blocked tile and rejects a blocked goal
   ok(route && route.some(function (p) { return Math.floor(p.z) !== 0; }));
   eq(NAVI.findRoute({ x: 0.5, z: 0.5 }, { x: 2.5, z: 0.5 }, function () { return false; }), null);
   eq(NAVI.steering(0, 1, 0).join(), "keyUp");
-  eq(NAVI.steering(1, 0, 0).join(), "keyRight");
+  eq(NAVI.steering(1, 0, 0).join(), "keyLeft");
 });
 
 // ---------- lifecycle ----------
@@ -691,6 +691,61 @@ test("being pushed too far stops the miner with a reason", function () {
 
 // ---------- other players ----------
 
+test("steering matches vanilla's left-positive input at every cardinal yaw", function () {
+  [0, 90, 180, -90].forEach(function (yaw) {
+    [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (delta) {
+      var w = MOCK.createMockWorld();
+      w.player.yaw = yaw;
+      NAVI.steering(delta[0], delta[1], yaw).forEach(function (key) { w.game.options[key].setDown(true); });
+      w.vanillaWalking();
+      ok((w.player.x - 0.5) * delta[0] + (w.player.z - 0.5) * delta[1] > 0.2, "moves toward goal at yaw " + yaw);
+    });
+  });
+});
+
+function raisedHome() {
+  var h = harness({ simulateWalking: true, simulateJump: true });
+  for (var x = -3; x <= 4; x++) for (var z = -3; z <= 3; z++) h.w.blocks.set(x + ",62," + z, h.w.stone);
+  h.w.blocks.set("0,63,0", h.w.stone);
+  ok(h.begin());
+  return h;
+}
+
+test("returning jumps onto a starting spot one block higher and settles there", function () {
+  var h = raisedHome();
+  h.w.player.x = 1.5; h.w.player.y = 63;
+  h.cycle();
+  ok(h.opts.keyJump.down, "requests a real jump");
+  h.run(150, function () { return !h.s().returning; });
+  ok(h.s().running, h.s().status); eq(h.s().returning, false);
+  ok(Math.abs(h.w.player.y - 64) < 0.02, "landed on raised home");
+  ok(GEO.hypot(h.w.player.x - 0.5, h.w.player.z - 0.5) <= 0.06, "at saved position");
+  eq(h.w.jumps, 1, "one jump suffices"); eq(h.opts.keyJump.down, false);
+});
+
+test("a lower-floor recovery approaches the ledge before jumping", function () {
+  var h = raisedHome();
+  h.w.player.x = 3.5; h.w.player.y = 63;
+  h.cycle(); eq(h.opts.keyJump.down, false, "walks closer first");
+  h.run(180, function () { return !h.s().returning; });
+  ok(h.s().running, h.s().status); eq(h.s().returning, false);
+  ok(Math.abs(h.w.player.x - 0.5) <= 0.06);
+  ok(Math.abs(h.w.player.y - 64) < 0.02); eq(h.w.jumps, 1);
+});
+
+test("a low ceiling prevents jumping and releasing recovery releases jump", function () {
+  var h = raisedHome();
+  h.w.player.x = 1.5; h.w.player.y = 63;
+  h.w.blocks.set("1,65,0", h.w.stone);
+  h.run(20);
+  ok(h.s().running); eq(h.w.jumps, 0); eq(h.opts.keyJump.down, false);
+  ok(h.s().status.indexOf("jump clearance") >= 0, h.s().status);
+  h.w.blocks.delete("1,65,0"); h.cycle();
+  ok(h.opts.keyJump.down);
+  h.miner.stop("Off");
+  ["keyJump", "keyLeft", "keyRight", "keyUp", "keyDown"].forEach(function (key) { eq(h.opts[key].down, false, key); });
+});
+
 test("player hitboxes hide blocks, but not blocks in front of or beside them", function () {
   var h = harness();
   var world = require("center/features/auto-miner/world").createWorld(h.w.T);
@@ -831,6 +886,54 @@ test("stopping during a sidestep releases every owned key and resets avoidance",
   ["keyAttack", "keyUp", "keyDown", "keyLeft", "keyRight", "keyShift"].forEach(function (key) { eq(h.opts[key].down, false, key); });
   eq(h.s().sidestepping, false);
   eq(h.opts.pauseOnLostFocus, true);
+});
+
+test("a full sidestep and return stay within one block of the start", function () {
+  var h = harness({ simulateWalking: true }); h.floor(-4, 4, -4, 4); ok(h.begin());
+  h.w.addPlayer(0.5, 64, 0.5);
+  var maximum = 0;
+  for (var i = 0; i < 210; i++) {
+    h.cycle();
+    maximum = Math.max(maximum, GEO.hypot(h.w.player.x - 0.5, h.w.player.z - 0.5));
+    if (i > 10 && !h.s().sidestepping && !h.s().returning) break;
+  }
+  ok(maximum >= 0.94 && maximum <= 1.06, "maximum distance was " + maximum);
+  ok(h.s().running); eq(h.s().sidestepping, false); eq(h.s().returning, false);
+});
+
+test("a newly blocked sidestep waits and returns instead of taking a long detour", function () {
+  var h = harness({ simulateWalking: true }); h.floor(-4, 4, -4, 4); ok(h.begin());
+  h.w.addPlayer(0.5, 64, 0.5);
+  h.miner.tick(); // plan east, but insert a wall before movement starts
+  h.w.blocks.set("1,64,0", h.w.stone); h.w.blocks.set("1,65,0", h.w.stone);
+  h.run(175);
+  eq(h.w.player.x, 0.5); eq(h.w.player.z, 0.5, "never walks around wall");
+  ok(h.s().running); eq(h.s().sidestepping, false); eq(h.s().returning, false);
+});
+
+test("a blocked return from a sidestep waits without detouring away", function () {
+  var h = startSidestep();
+  h.w.blocks.set("0,64,0", h.w.stone); h.w.blocks.set("0,65,0", h.w.stone);
+  h.w.players = [];
+  var x = h.w.player.x, z = h.w.player.z;
+  h.run(60);
+  ok(h.s().returning); eq(h.w.player.x, x); eq(h.w.player.z, z);
+});
+
+test("falling one block from a temporary spot jumps back to the original home", function () {
+  var h = harness({ simulateWalking: true, simulateJump: true });
+  h.floor(-2, 3, -2, 2);
+  for (var x = -2; x <= 3; x++) for (var z = -2; z <= 2; z++) h.w.blocks.set(x + ",62," + z, h.w.stone);
+  ok(h.begin()); h.w.addPlayer(0.5, 64, 0.5);
+  h.cycle();
+  h.run(60, function () { return h.s().sidestepping && h.s().activity !== "sidestepping"; });
+  ok(Math.abs(h.w.player.x - 1.5) <= 0.06);
+  h.w.blocks.delete("1,63,0"); h.w.player.y = 63; h.w.players = [];
+  h.cycle();
+  h.run(150, function () { return !h.s().returning; });
+  ok(h.s().running, h.s().status); eq(h.s().returning, false); eq(h.s().sidestepping, false);
+  ok(Math.abs(h.w.player.y - 64) < 0.02); ok(Math.abs(h.w.player.x - 0.5) <= 0.06);
+  eq(h.w.jumps, 1);
 });
 
 print(passed + " tests passed");

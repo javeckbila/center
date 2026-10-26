@@ -1,6 +1,7 @@
 // Walk-home controller. When the player is pushed off the start position the
 // miner pauses and this steers back with ordinary movement keys (it never
-// teleports, sets velocity or jumps). Same floor only, small detours allowed.
+// teleports or sets velocity). Supports jumping up one block. Sidesteps and
+// their return use the direct segment only; ordinary push recovery may detour.
 const { hypot } = require("./geometry");
 const { steering, findRoute } = require("./navigation");
 
@@ -33,15 +34,34 @@ function update(game, time, anchor, rec, keys, world) {
   if (distance > MAX_DISTANCE || Math.abs(p.getY() - anchor.y) > MAX_HEIGHT) {
     return { failure: "Too far from the starting spot to walk back" };
   }
+  if (distance < rec.bestDistance - 0.025) {
+    rec.bestDistance = distance;
+    rec.lastProgress = time;
+  }
+  if (rec.jump) {
+    if (!p.onGround()) rec.jump.airborne = true;
+    if (p.onGround() && (rec.jump.airborne || time - rec.jump.since > 0.5)) {
+      rec.jump = null;
+      rec.route = null;
+    } else {
+      if (time - rec.jump.since > AIRBORNE_TIMEOUT) return { failure: "Cannot land on the starting floor" };
+      const pressed = distance > HOME_RADIUS ? steering(anchor.x - p.getX(), anchor.z - p.getZ(), p.getYRot()) : [];
+      if (!rec.jump.airborne) pressed.push("keyJump");
+      keys.hold(pressed);
+      return { status: "Returning: jumping to starting floor" };
+    }
+  }
   if (!p.onGround()) {
     keys.release();
     rec.settled = 0;
     if (time - rec.lastProgress > AIRBORNE_TIMEOUT) return { failure: "Cannot reach the starting floor" };
     return { status: "Returning: waiting to land" };
   }
-  if (Math.abs(p.getY() - anchor.y) > FLOOR_TOLERANCE) return { failure: "Starting floor is no longer reachable on foot" };
+  const rise = anchor.y - p.getY();
+  if (rise < -FLOOR_TOLERANCE || rise > 1.1) return { failure: "Starting floor is more than one jump away" };
+  if (time - rec.lastProgress > STALL_TIMEOUT) return { failure: "Return path is blocked" };
 
-  if (distance <= HOME_RADIUS) {
+  if (distance <= HOME_RADIUS && Math.abs(rise) <= FLOOR_TOLERANCE) {
     keys.release();
     const drift = hypot(p.getX() - rec.previousX, p.getZ() - rec.previousZ);
     rec.previousX = p.getX();
@@ -51,17 +71,26 @@ function update(game, time, anchor, rec, keys, world) {
   }
 
   rec.settled = 0;
-  if (distance < rec.bestDistance - 0.025) {
-    rec.bestDistance = distance;
-    rec.lastProgress = time;
-  }
-  if (time - rec.lastProgress > STALL_TIMEOUT) return { failure: "Return path is blocked" };
 
   const position = { x: p.getX(), z: p.getZ() };
-  const goal = { x: anchor.x, z: anchor.z };
-  const canWalk = (from, to) => world.walkable(game, from, to, anchor.y);
+  let goal = { x: anchor.x, z: anchor.z };
+  let floorY = anchor.y;
+  if (rise > FLOOR_TOLERANCE) {
+    if (distance <= 1.4) {
+      keys.release();
+      if (!world.jumpable(game, position, goal, p.getY(), anchor.y)) return { status: "Returning: waiting for jump clearance" };
+      rec.jump = { since: time, airborne: false };
+      keys.hold(steering(goal.x - position.x, goal.z - position.z, p.getYRot()).concat(["keyJump"]));
+      return { status: "Returning: jumping to starting floor" };
+    }
+    // Walk along the lower floor until close enough to jump onto home.
+    goal = { x: anchor.x + (position.x - anchor.x) / distance * 1.05,
+      z: anchor.z + (position.z - anchor.z) / distance * 1.05 };
+    floorY = p.getY();
+  }
+  const canWalk = (from, to) => world.walkable(game, from, to, floorY);
   if (!rec.route || time >= rec.nextPlan) {
-    rec.route = canWalk(position, goal) ? [goal] : findRoute(position, goal, canWalk);
+    rec.route = canWalk(position, goal) ? [goal] : (rec.directOnly ? null : findRoute(position, goal, canWalk));
     rec.nextPlan = time + REPLAN_INTERVAL;
   }
   if (!rec.route) {

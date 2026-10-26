@@ -33,6 +33,10 @@ block in a clear direction and resumes mining there. It returns to the original
 starting position if that player follows into you, after the area clears for
 one second, or when the eight-second sidestep timer expires. Walls, unsafe ground and
 occupied destinations prevent a sidestep; normal walk-home safety checks apply.
+Sidesteps and their return follow the direct path without long detours. A
+blocked path waits, and outward movement is bounded near the one-block target.
+Recovery can jump back onto a starting spot one block higher when there is
+headroom and a clear landing.
 The original starting floor is preserved while mining from the temporary spot.
 Reload with `/ct load` to apply this update.
 

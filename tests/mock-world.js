@@ -296,14 +296,27 @@ function createMockWorld(options) {
   };
 
   // Simplified player movement from the held movement keys for one tick.
+  var verticalSpeed = 0;
+  w.jumps = 0;
   w.vanillaWalking = function () {
     var forward = Number(opts.keyUp.down) - Number(opts.keyDown.down);
-    var right = Number(opts.keyRight.down) - Number(opts.keyLeft.down);
+    var left = Number(opts.keyLeft.down) - Number(opts.keyRight.down);
     var radians = player.yaw * Math.PI / 180;
-    var scale = (opts.keyShift.down ? 0.063 : 0.215) / Math.max(1, Math.sqrt(forward * forward + right * right));
-    var dx = (-Math.sin(radians) * forward + Math.cos(radians) * right) * scale;
-    var dz = (Math.cos(radians) * forward + Math.sin(radians) * right) * scale;
+    var scale = (opts.keyShift.down ? 0.063 : 0.215) / Math.max(1, Math.sqrt(forward * forward + left * left));
+    var dx = (-Math.sin(radians) * forward + Math.cos(radians) * left) * scale;
+    var dz = (Math.cos(radians) * forward + Math.sin(radians) * left) * scale;
+    if (options.simulateJump && w.grounded && opts.keyJump.down) { verticalSpeed = 0.42; w.grounded = false; w.jumps++; }
     if (level.noCollision(player, player.getBoundingBox().move(dx, 0, dz))) { player.x += dx; player.z += dz; }
+    if (options.simulateJump) {
+      var pieces = Math.max(1, Math.ceil(Math.abs(verticalSpeed) / 0.01));
+      w.grounded = false;
+      for (var i = 0; i < pieces; i++) {
+        if (level.noCollision(player, player.getBoundingBox().move(0, verticalSpeed / pieces, 0))) player.y += verticalSpeed / pieces;
+        else { w.grounded = verticalSpeed < 0; verticalSpeed = 0; break; }
+      }
+      if (verticalSpeed === 0) w.grounded = !level.noCollision(player, player.getBoundingBox().move(0, -0.01, 0));
+      verticalSpeed = w.grounded ? 0 : (verticalSpeed - 0.08) * 0.98;
+    }
   };
 
   return w;
