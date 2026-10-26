@@ -49,9 +49,24 @@ Routes and settings are stored in the user's uncommitted `config.json`.
 Changes to settings and named saves are written immediately and survive reloads.
 Routes are bound to their server or singleplayer save and dimension. Clear
 the route before recording in a different world. Farming always loads off.
-Opening a screen, changing worlds, losing all usable hoes, becoming stuck,
-or encountering unsafe ground stops farming and releases its inputs. Auto
-Farm and Auto Miner cannot control the player simultaneously.
+Server rubber-banding near the route rejoins the appropriate segment and
+resets the progress check. A correction never counts as walking through a
+waypoint. This also works on the initial approach to the loop. Corrections
+must remain within 3 horizontal blocks and 2 vertical blocks of a route leg
+or the initial approach; displacement farther away stops farming.
+
+Unloaded chunks, water, riding, item use and a paused game release the macro's
+inputs and wait until farming can resume. No movement on clear ground retries
+the waypoint after a short rest instead of disabling the macro during server
+lag. A wall or low ceiling gets 15 seconds to clear; prolonged loss of ground
+support also stops farming. Client freezes do not consume these recovery
+deadlines. Starting while airborne or holding keys waits for landing/release.
+The HUD and `/af status` show the reason while waiting.
+
+Opening a screen remains an immediate manual stop. Changing worlds, death,
+spectator mode, lava, losing all usable hoes, unsafe drops and persistent
+impassable obstacles stop farming and release its inputs. Auto Farm and Auto
+Miner cannot control the player simultaneously.
 
 The controller holds vanilla attack and automatically selects a usable
 hotbar hoe, switching to a spare before its final durability point. It restores

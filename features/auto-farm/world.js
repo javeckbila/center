@@ -33,7 +33,7 @@ function createWorld(T) {
       const x = direction.x * distance, z = direction.z * distance;
       const next = box.move(x, 0, z);
       if (!game.level.hasChunk(Math.floor((player.getX() + x) / 16), Math.floor((player.getZ() + z) / 16))) {
-        return { blocked: true, jump: false, safe: false };
+        return { blocked: true, jump: false, safe: false, unloaded: true };
       }
       if (!game.level.noCollision(player, next)) blocked = true;
       if (!game.level.noCollision(player, next.move(0, 1.05, 0))) raisedClear = false;

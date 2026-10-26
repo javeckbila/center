@@ -307,32 +307,141 @@ test("jump is requested before colliding with a one-block obstacle", function ()
   ok(h.farmer.state().laps >= 1, "passes obstacle and completes the route");
 });
 
-test("a tall wall or low ceiling is stopped before movement or attack continues", function () {
+test("a tall wall or low ceiling pauses input and only stops if it persists", function () {
   ["wall", "ceiling"].forEach(kind => {
     var h = harness([{ x: 0.5, y: 64, z: 6.5 }, { x: 0.5, y: 64, z: 0.5 }]); h.w.player.z = 1.3;
     h.w.blocks.set("0,64,2", h.w.stone);
     h.w.blocks.set(kind === "wall" ? "0,65,2" : "0,66,1", h.w.stone);
     ok(h.begin()); h.cycle();
+    ok(h.farmer.state().running); eq(h.halts.length, 0); released(h);
+    h.run(310, false);
     eq(h.farmer.state().phase, "off"); ok(h.halts[0].indexOf("ceiling") >= 0); released(h);
   });
 });
 
-test("an edge or unloaded chunk stops instead of walking into it", function () {
+test("an edge stops safely; unloaded chunks wait for loading without a deadline", function () {
   var h = harness();
   for (var x = -8; x <= 8; x++) for (var z = 1; z <= 14; z++) h.w.blocks.delete(x + ",63," + z);
   h.w.player.z = 0.85; ok(h.begin()); h.run(3, true);
   eq(h.farmer.state().phase, "off"); released(h);
   h = harness(); ok(h.begin()); h.w.loadedChunks = false; h.cycle();
-  eq(h.farmer.state().phase, "off"); released(h);
+  ok(h.farmer.state().running); eq(h.halts.length, 0); released(h);
+  var yaw = h.w.player.yaw;
+  h.run(100, false); released(h); eq(h.w.player.yaw, yaw, "no camera takeover while waiting");
+  h.w.loadedChunks = true; h.cycle(true);
+  ok(h.farmer.state().running); ok(h.w.game.options.keyAttack.down);
+  h.w.loadedChunks = false; h.run(610, false);
+  ok(h.farmer.state().running); eq(h.halts.length, 0); released(h);
+  h.w.loadedChunks = true; h.cycle(); ok(h.w.game.options.keyAttack.down);
 });
 
-test("blocked progress, teleport, water, death and context changes release inputs", function () {
-  var h = harness(); ok(h.begin()); h.run(95, false);
-  ok(h.halts[0].indexOf("Cannot reach") >= 0); released(h);
-  ["teleport", "water", "death", "dimension", "player"].forEach(kind => {
+test("no movement on clear terrain retries instead of treating lag as an impossible route", function () {
+  var h = harness(); ok(h.begin()); h.run(305, false);
+  ok(h.farmer.state().running); eq(h.halts.length, 0); released(h);
+  ok(h.farmer.state().status.indexOf("retrying") >= 0);
+  h.run(1200, false); ok(h.farmer.state().running, "even a prolonged stall stays enabled");
+  h.run(150, true); ok(h.farmer.state().running); ok(h.farmer.state().laps >= 1, "server recovery resumes the loop");
+});
+
+test("repeated large and small server rollbacks resume toward the waypoint", function () {
+  var h = harness([{ x: 0.5, y: 64, z: 12.5 }, { x: 0.5, y: 64, z: 0.5 }]);
+  ok(h.begin());
+  for (var i = 0; i < 3; i++) {
+    h.run(36, true);
+    ok(h.w.player.z > 7.5, "moved far enough for a large rollback");
+    h.w.player.x = 0.5; h.w.player.z = 0.5; h.w.motion = { x: 0, y: 0, z: 0 };
+    h.cycle();
+    ok(h.farmer.state().running, h.halts.join(", ")); eq(h.farmer.state().target, 0);
+    eq(h.farmer.state().laps, 0, "rollback is not waypoint progress");
+  }
+  h.run(20, true);
+  h.w.player.z -= 0.5; h.cycle();
+  h.run(200, true);
+  eq(h.halts.length, 0); ok(h.farmer.state().laps >= 1, "loop completes after lag clears");
+});
+
+test("a rollback across a corner rejoins the earlier leg without skipping a waypoint", function () {
+  var h = harness([{ x: 0.5, y: 64, z: 0.5 }, { x: 0.5, y: 64, z: 8.5 }, { x: 6.5, y: 64, z: 8.5 }]);
+  ok(h.begin());
+  for (var i = 0; i < 100 && h.farmer.state().target !== 2; i++) h.cycle(true);
+  eq(h.farmer.state().target, 2);
+  h.w.player.x = 0.5; h.w.player.z = 1.5; h.w.motion = { x: 0, y: 0, z: 0 };
+  h.cycle();
+  eq(h.farmer.state().target, 1, "returns to the missed corner"); eq(h.farmer.state().laps, 0);
+  h.run(240, true); ok(h.farmer.state().running, h.halts.join(", "));
+  ok(h.farmer.state().laps >= 1);
+});
+
+test("rollbacks on the initial approach work even away from the saved loop", function () {
+  var h = harness([{ x: 0.5, y: 64, z: 12.5 }, { x: 6.5, y: 64, z: 12.5 }]);
+  ok(h.begin()); h.run(36, true);
+  h.w.player.x = 0.5; h.w.player.z = 0.5; h.w.motion = { x: 0, y: 0, z: 0 };
+  h.cycle(); ok(h.farmer.state().running, h.halts.join(", ")); eq(h.farmer.state().target, 0);
+  h.run(240, true); ok(h.farmer.state().laps >= 1);
+});
+
+test("a position correction crossing the goal does not count as walking through it", function () {
+  var h = harness([{ x: 0.5, y: 64, z: 3.5 }, { x: 0.5, y: 64, z: 12.5 }]);
+  ok(h.begin()); h.cycle();
+  h.w.player.z = 8.5; h.cycle();
+  ok(h.farmer.state().running); eq(h.farmer.state().target, 0); eq(h.farmer.state().laps, 0);
+});
+
+test("temporary collision, water, item use, riding and pause release input then resume", function () {
+  ["wall", "water", "item", "riding", "pause"].forEach(kind => {
+    var h = harness([{ x: 0.5, y: 64, z: 6.5 }, { x: 0.5, y: 64, z: 0.5 }]);
+    h.w.player.z = 1.3; ok(h.begin()); h.cycle();
+    if (kind === "wall") { h.w.blocks.set("0,64,2", h.w.stone); h.w.blocks.set("0,65,2", h.w.stone); }
+    if (kind === "water") h.w.water = true;
+    if (kind === "item") h.w.player.isUsingItem = () => true;
+    if (kind === "riding") h.w.player.isPassenger = () => true;
+    if (kind === "pause") h.w.game.isPaused = () => true;
+    h.cycle(); h.run(kind === "wall" ? 100 : 610, false); released(h); eq(h.w.selectedSlot, 4, "hoe stays selected while waiting");
+    ok(h.farmer.state().running, kind); eq(h.halts.length, 0);
+    h.w.blocks.delete("0,64,2"); h.w.blocks.delete("0,65,2"); h.w.water = false;
+    h.w.player.isUsingItem = h.w.player.isPassenger = h.w.game.isPaused = () => false;
+    h.run(150, true); ok(h.farmer.state().running, kind + ": " + h.halts.join(", "));
+    ok(h.farmer.state().laps >= 1, kind + " resumes");
+    h.farmer.stop(); released(h); eq(h.w.selectedSlot, 0);
+  });
+});
+
+test("long client stalls do not consume recovery timeouts", function () {
+  var h = harness(); ok(h.begin()); h.cycle();
+  h.w.loadedChunks = false; h.cycle(); released(h);
+  h.w.clock += 120; h.farmer.tick();
+  ok(h.farmer.state().running); eq(h.halts.length, 0); released(h);
+  h.w.loadedChunks = true; h.run(150, true); ok(h.farmer.state().laps >= 1);
+});
+
+test("starting in midair or with manual keys held waits without taking input", function () {
+  var h = harness(); h.w.grounded = false; ok(!h.begin());
+  eq(h.farmer.state().phase, "arming"); released(h);
+  h.w.grounded = true; h.w.game.options.keyUp.down = true; h.farmer.tick();
+  eq(h.farmer.state().phase, "arming"); eq(h.w.game.options.keyUp.down, true);
+  h.w.game.options.keyUp.down = false; h.farmer.tick();
+  ok(h.farmer.state().running); eq(h.halts.length, 0);
+});
+
+test("temporary loss of ground recovers; persistent loss, world changes and manual stop release waits", function () {
+  var h = harness(); ok(h.begin()); h.cycle(); h.w.grounded = false;
+  h.run(40, false); ok(h.farmer.state().running); released(h);
+  h.w.grounded = true; h.run(150, true); ok(h.farmer.state().laps >= 1);
+  h.w.grounded = false; h.run(340, false);
+  eq(h.farmer.state().phase, "off"); released(h);
+  ["world", "stop"].forEach(kind => {
+    h = harness(); ok(h.begin()); h.w.loadedChunks = false; h.cycle(); released(h);
+    if (kind === "world") { h.context("other"); h.cycle(); } else h.farmer.stop();
+    eq(h.farmer.state().phase, "off"); released(h); eq(h.w.selectedSlot, 0);
+  });
+});
+
+test("displacement away from the route, lava, death and context changes still release inputs", function () {
+  ["teleport", "lava", "death", "dimension", "player"].forEach(kind => {
+    var h;
     h = harness(); ok(h.begin()); h.cycle();
     if (kind === "teleport") h.w.player.x += 10;
-    if (kind === "water") h.w.water = true;
+    if (kind === "lava") h.w.lava = true;
     if (kind === "death") h.w.player.isAlive = () => false;
     if (kind === "dimension") h.context("other");
     if (kind === "player") h.w.game.player = null;
