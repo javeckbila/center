@@ -102,8 +102,6 @@ var Java = {
     if (name === "java.lang.System") return java.lang.System;
     if (name.indexOf("CursorTypes") >= 0) return { IBEAM: "ibeam", POINTING_HAND: "hand" };
     if (name.indexOf("AbstractContainerScreen") >= 0) return MockContainerScreen;
-    if (name === "net.minecraft.world.phys.shapes.EntityCollisionContext") return MockEntityContext;
-    if (name === "net.minecraft.world.phys.shapes.Shapes") return { block: function () { return FULL_SHAPE; } };
     if (MOCKW.typeByName[name]) return MOCKW.typeByName[name];
     throw new Error("class not found " + name);
   },
@@ -112,18 +110,12 @@ var Java = {
 // callbacks here with vanilla-shaped argument bags.
 var mixinDefinitions = [];
 function At(options) { this.options = options; }
-function Local(options) { this.options = options; }
 function Mixin(target) { this.target = target; }
 Mixin.prototype.modifyArgs = function (options) {
   var hook = { target: this.target, options: options, attach: function (fn) { this.fn = fn; } };
   mixinDefinitions.push(hook);
   return hook;
 };
-Mixin.prototype.modifyReturnValue = Mixin.prototype.modifyArgs;
-// Stand-ins for the shape classes Farm Hitboxes resolves.
-function MockEntityContext(entity) { this.entity = entity; }
-MockEntityContext.prototype.getEntity = function () { return this.entity; };
-var FULL_SHAPE = { name: "full block" };
 function invokeViewHook(name, receiver, a, b) {
   var values = [a, b];
   require("center/mixins")[name].fn(receiver, {
@@ -213,10 +205,10 @@ function rowY(labelText) { return findText(labelText).y - 7 - T.state.scroll; }
 test("module loads with interface + example modules and a /center command", function () {
   ok(center.defineFeature && center.open, "public API exported");
   ok(R.get("center") && infoHud && sprintF && R.get("auto-miner"), "features registered");
-  eq(R.all().length, 7, "interface group is hidden");
+  eq(R.all().length, 6, "interface group is hidden");
   ok(triggers.some(function (t) { return t.type === "command" && t.name === "center"; }), "/center registered");
   ok(triggers.some(function (t) { return t.type === "command" && t.name === "auto-miner"; }), "/auto-miner registered");
-  eq(R.categories().join(","), "Automation,Movement,Render,World");
+  eq(R.categories().join(","), "Automation,Movement,Render");
 });
 
 test("legacy corner setting migrates to a free HUD position", function () {
@@ -419,65 +411,6 @@ test("toggle sprint holds and releases the sprint key", function () {
   ok(sprint.down, "held while enabled");
   sprintF.setEnabled(false);
   ok(!sprint.down, "released on disable");
-});
-
-// ---------- Farm Hitboxes ----------
-var hitboxes = R.get("farm-hitboxes");
-function hitboxShape(block, context) {
-  return require("center/mixins").farmShapes[block].fn({}, "vanilla", context);
-}
-
-test("farm hitboxes hook every farm plant's getShape at RETURN with its collision context", function () {
-  ok(hitboxes && hitboxes.category === "World", "registered under World");
-  var hooked = mixinDefinitions.filter(function (h) { return h.target.indexOf("net.minecraft.world.level.block.") === 0; });
-  eq(hooked.map(function (h) { return h.target.split(".").pop(); }).join(","),
-    "CropBlock,CarrotBlock,PotatoBlock,BeetrootBlock,TorchflowerCropBlock,NetherWartBlock,MushroomBlock,NetherFungusBlock,CocoaBlock,SugarCaneBlock,SweetBerryBushBlock");
-  hooked.forEach(function (h) {
-    ok(h.options.method.indexOf("getShape(") === 0 && /CollisionContext;\)L.*VoxelShape;$/.test(h.options.method), "4-arg getShape");
-    eq(h.options.at.options, "RETURN");
-    eq(h.options.locals.options.type, "Lnet/minecraft/world/phys/shapes/CollisionContext;");
-    eq(h.options.locals.options.ordinal, 0);
-    eq(typeof h.fn, "function", "callback attached for " + h.target);
-  });
-  eq(hitboxes.settings.map(function (s) { return s.key + "=" + s.default; }).join(","),
-    "crops=true,netherWart=true,mushrooms=true,cocoa=true,sugarCane=true,sweetBerries=true");
-});
-
-test("farm hitboxes become full blocks only for the local player's queries while enabled", function () {
-  var mine = new MockEntityContext(mc.player);
-  ok(!hitboxes.isEnabled(), "starts disabled");
-  eq(hitboxShape("CropBlock", mine), "vanilla", "disabled leaves vanilla shapes");
-  chat.length = 0;
-  hitboxes.setEnabled(true);
-  eq(chat.length, 0, "no restart reminder when every hook is installed");
-  ["CropBlock", "CarrotBlock", "PotatoBlock", "BeetrootBlock", "TorchflowerCropBlock", "NetherWartBlock",
-    "MushroomBlock", "NetherFungusBlock", "CocoaBlock", "SugarCaneBlock", "SweetBerryBushBlock"].forEach(function (b) {
-    eq(hitboxShape(b, mine), FULL_SHAPE, b + " targets as a full block");
-  });
-  eq(hitboxShape("CocoaBlock", new MockEntityContext(null)), "vanilla", "CollisionContext.empty() (collision, particles) is untouched");
-  eq(hitboxShape("CropBlock", new MockEntityContext({ other: true })), "vanilla", "other entities keep vanilla shapes");
-  eq(hitboxShape("CropBlock", { placement: true }), "vanilla", "non-entity contexts keep vanilla shapes");
-  var player = mc.player;
-  mc.player = null;
-  eq(hitboxShape("CropBlock", mine), "vanilla", "no player, no change");
-  mc.player = player;
-});
-
-test("farm hitbox groups toggle independently and callback errors return the vanilla shape", function () {
-  var mine = new MockEntityContext(mc.player);
-  hitboxes.set("mushrooms", false);
-  eq(hitboxShape("MushroomBlock", mine), "vanilla"); eq(hitboxShape("NetherFungusBlock", mine), "vanilla");
-  eq(hitboxShape("NetherWartBlock", mine), FULL_SHAPE, "other groups unaffected");
-  hitboxes.set("mushrooms", true);
-  eq(hitboxShape("NetherFungusBlock", mine), FULL_SHAPE);
-  var broken = new MockEntityContext(mc.player);
-  broken.getEntity = function () { throw new Error("shape boom"); };
-  hitboxes.lastError = 0;
-  eq(hitboxShape("SugarCaneBlock", broken), "vanilla", "errors never escape into Minecraft");
-  ok(logged.some(function (l) { return l.indexOf("shape boom") >= 0; }), "error logged");
-  ok(hitboxes.isEnabled(), "stays enabled");
-  hitboxes.setEnabled(false);
-  eq(hitboxShape("SugarCaneBlock", mine), "vanilla", "disabling restores vanilla shapes immediately");
 });
 
 test("info hud draws without leaking stacks", function () {

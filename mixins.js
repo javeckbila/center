@@ -16,19 +16,4 @@ const cameraRotation = cameraMixin.modifyArgs({
   require: 1,
 });
 
-// Farm Hitboxes: each crop class overrides getShape, so each needs its own hook.
-// The CollisionContext parameter lets the callback change only the local
-// player's outline/raycast queries; collision passes CollisionContext.empty().
-const SHAPE_METHOD = "getShape(Lnet/minecraft/world/level/block/state/BlockState;Lnet/minecraft/world/level/BlockGetter;" +
-  "Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/phys/shapes/CollisionContext;)Lnet/minecraft/world/phys/shapes/VoxelShape;";
-const farmShape = block => new Mixin(`net.minecraft.world.level.block.${block}`).modifyReturnValue({
-  method: SHAPE_METHOD,
-  at: new At("RETURN"),
-  locals: new Local({ type: "Lnet/minecraft/world/phys/shapes/CollisionContext;", ordinal: 0 }),
-});
-const farmShapes = {};
-["CropBlock", "CarrotBlock", "PotatoBlock", "BeetrootBlock", "TorchflowerCropBlock", "NetherWartBlock",
-  "MushroomBlock", "NetherFungusBlock", "CocoaBlock", "SugarCaneBlock", "SweetBerryBushBlock"]
-  .forEach(block => { farmShapes[block] = farmShape(block); });
-
-module.exports = { mouseTurn, cameraRotation, farmShapes };
+module.exports = { mouseTurn, cameraRotation };

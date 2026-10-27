@@ -18,23 +18,6 @@ on disconnect, world unload and module reload, and always loads disabled.
 Use `/center off anti-afk` or its assigned toggle key to stop it.
 Reload with `/ct load` to add the feature; this change adds no mixins.
 
-## Farm Hitboxes
-
-Enable **Farm Hitboxes** under **World**, or use `/center toggle farm-hitboxes`.
-Your crosshair and block highlight then treat farm plants as full blocks, so
-small or young plants are easy to hit. Each group can be switched off in the
-menu: crops (wheat, carrots, potatoes, beetroots, torchflowers), nether wart,
-mushrooms (red, brown, crimson and warped fungi), cocoa, sugar cane, and sweet
-berry bushes.
-
-Only your own targeting changes. Collision, break particles, other entities and
-the singleplayer server keep vanilla shapes, so walking into cocoa still uses
-the pod's real size.
-
-**Restart Minecraft after installing this version.** It adds block-shape hooks
-to `mixins.js`, which `/ct load` cannot install into a running game. Until the
-restart, enabling the module shows a reminder and hitboxes stay vanilla.
-
 ## Inventory HUD
 
 Enable **Inventory HUD** under **Render** to see your 27 main inventory slots

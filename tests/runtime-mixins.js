@@ -10,10 +10,7 @@ var Client = { getMinecraft: () => w.game, isInGui: () => w.gui };
 var ChatLib = { chat: text => messages.push(String(text)) };
 var Java = { type: name => name === "java.lang.System" ? java.lang.System : w.typeByName[name] };
 function At(options) { this.options = options; }
-function Local(options) { this.options = options; }
 function Mixin(target) { this.target = target; }
-// Farm Hitboxes' shape hooks are also new injectors after /ct load.
-Mixin.prototype.modifyReturnValue = function () { return null; };
 Mixin.prototype.modifyArgs = function () {
   var isMouse = this.target.indexOf("MouseHandler") >= 0;
   if (missing === "both" || (missing === "mouse" && isMouse) || (missing === "camera" && !isMouse)) return null;
