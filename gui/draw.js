@@ -132,6 +132,15 @@ function text(str, x, y, c, a, shadow) {
   S.ctx.text(font(), String(str), Math.round(x), Math.round(y), col(c, a), !!shadow);
 }
 
+// 16x16 item icon; decorations = stack count, durability bar and cooldown, as in inventories.
+function item(stack, x, y, decorations) {
+  if (stack == null || stack.isEmpty()) return;
+  const ix = Math.round(x);
+  const iy = Math.round(y);
+  S.ctx.item(stack, ix, iy);
+  if (decorations !== false) S.ctx.itemDecorations(font(), stack, ix, iy);
+}
+
 function width(str) { return str == null ? 0 : font().width(String(str)); }
 
 function truncate(str, maxW) {
@@ -187,5 +196,5 @@ function magnifier(x, y, c, bg) {
 
 module.exports = {
   begin, end, setAlpha, pushPose, popPose, pushScissor, popScissor,
-  col, mix, rect, rrect, panel, text, width, truncate, tail, wrap, glyph, magnifier,
+  col, mix, rect, rrect, panel, text, item, width, truncate, tail, wrap, glyph, magnifier,
 };

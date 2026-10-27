@@ -18,6 +18,21 @@ on disconnect, world unload and module reload, and always loads disabled.
 Use `/center off anti-afk` or its assigned toggle key to stop it.
 Reload with `/ct load` to add the feature; this change adds no mixins.
 
+## Inventory HUD
+
+Enable **Inventory HUD** under **Render** to see your 27 main inventory slots
+on screen, with stack counts and durability bars. By default it sits in the
+bottom-right corner; drag or scale it with `/center hud`. Optional rows add the
+hotbar (selected slot highlighted) and your armor and offhand. The title shows
+how many of the 36 inventory and hotbar slots are empty, or **Full**.
+
+Slots that gain items briefly turn green, slots that lose items turn red, and
+a slot swapped for a different item uses the accent color. Changes made while
+an inventory or container is open are not highlighted, and by default the HUD
+is hidden there. Set **Hold to show** to a key to display it only while that
+key is held. Slot style can be Modern, Vanilla or None.
+Reload with `/ct load` to add the feature; this change adds no mixins.
+
 ## Automation perspective
 
 Once Auto Miner or Auto Farm actually starts, Center switches to rear third

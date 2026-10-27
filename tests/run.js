@@ -95,10 +95,13 @@ var console = {
   log: function (m) { logged.push(String(m)); }, warn: function (m) { logged.push(String(m)); },
   error: function (m) { logged.push("ERROR " + m); },
 };
+// Stand-in for net.minecraft's AbstractContainerScreen (inventories, chests).
+function MockContainerScreen() { this._cb = {}; }
 var Java = {
   type: function (name) {
     if (name === "java.lang.System") return java.lang.System;
     if (name.indexOf("CursorTypes") >= 0) return { IBEAM: "ibeam", POINTING_HAND: "hand" };
+    if (name.indexOf("AbstractContainerScreen") >= 0) return MockContainerScreen;
     if (MOCKW.typeByName[name]) return MOCKW.typeByName[name];
     throw new Error("class not found " + name);
   },
@@ -144,7 +147,10 @@ function makeCtx(w, h) {
     enableScissor: function (a, b, x, y) { if (![a, b, x, y].every(isInt)) c.bad.push("scissor"); c.scissor++; },
     disableScissor: function () { c.scissor--; },
     nextStratum: function () {}, requestCursor: function (k) { c.cursor = k; },
+    item: function (s, x, y) { if (![x, y].every(isInt) || !s) c.bad.push("item " + [x, y]); c.items.push({ s: s, x: x, y: y }); },
+    itemDecorations: function (f, s, x, y) { if (![x, y].every(isInt) || !f || !s) c.bad.push("itemDecorations"); c.decorations++; },
   };
+  c.items = []; c.decorations = 0;
   return c;
 }
 
@@ -199,7 +205,7 @@ function rowY(labelText) { return findText(labelText).y - 7 - T.state.scroll; }
 test("module loads with interface + example modules and a /center command", function () {
   ok(center.defineFeature && center.open, "public API exported");
   ok(R.get("center") && infoHud && sprintF && R.get("auto-miner"), "features registered");
-  eq(R.all().length, 5, "interface group is hidden");
+  eq(R.all().length, 6, "interface group is hidden");
   ok(triggers.some(function (t) { return t.type === "command" && t.name === "center"; }), "/center registered");
   ok(triggers.some(function (t) { return t.type === "command" && t.name === "auto-miner"; }), "/auto-miner registered");
   eq(R.categories().join(","), "Automation,Movement,Render");
@@ -937,6 +943,142 @@ test("an Anti AFK runtime error releases keys and disables the feature", functio
   ticks(1); mc.player.getYRot = original;
   eq(mc.options.keyLeft.down, false); eq(mc.options.pauseOnLostFocus, true);
   frames(); ok(!afk.isEnabled());
+});
+
+// ---------- Inventory HUD ----------
+var invHud = R.get("inventory-hud");
+var INV = require("center/features/inventory-hud")._test;
+var ITEM = { cobble: { id: "cobble" }, sword: { id: "sword" }, helmet: { id: "helmet" }, dirt: { id: "dirt" } };
+function invStack(item, n) {
+  return { isEmpty: function () { return !item || n <= 0; }, getItem: function () { return item; }, getCount: function () { return n; } };
+}
+var invSlots = {};
+var invSelected = 0;
+var mockInventory = {
+  getItem: function (slot) { return invSlots[slot] || invStack(null, 0); },
+  getSelectedSlot: function () { return invSelected; },
+};
+function invOverlay() {
+  var c = makeCtx(480, 270);
+  fire("renderoverlay", c.ctx);
+  eq(c.depth, 0, "pose stack balanced"); eq(c.scissor, 0, "scissor stack balanced");
+  if (c.bad.length) throw new Error("bad draw calls: " + c.bad.slice(0, 3).join(" | "));
+  return c;
+}
+var realGetInventory = mc.player.getInventory;
+
+test("inventory HUD draws the main grid, free slots and optional rows", function () {
+  mc.player.getInventory = function () { return mockInventory; };
+  currentScreen = null; worldLoaded = true;
+  invSlots = { 9: invStack(ITEM.cobble, 64), 35: invStack(ITEM.dirt, 3), 0: invStack(ITEM.sword, 1), 39: invStack(ITEM.helmet, 1) };
+  ok(invHud && invHud.hud === HUD.get("inventory-hud"), "registered as a movable HUD element");
+  eq(invHud.category, "Render");
+  eq(invOverlay().items.length, 0, "nothing drawn while disabled");
+  invHud.setEnabled(true);
+  var c = invOverlay();
+  eq(c.items.length, 2, "main inventory items only by default");
+  eq(c.decorations, 2, "counts and durability bars drawn");
+  ok(c.texts.some(function (t) { return t.s === "Inventory"; }) && c.texts.some(function (t) { return t.s === "33 free"; }), "title and free count");
+  var size = INV.measure(invHud, false);
+  eq(size.w, 170); eq(size.h, 74); eq(size.cells.length, 27);
+  ok(c.translates.some(function (t) { return t[0] === 480 - 170 - 6 && t[1] === 270 - 74 - 6; }), "default position is bottom right");
+
+  invHud.set("hotbar", true); invHud.set("equipment", true);
+  c = invOverlay();
+  eq(c.items.length, 4, "hotbar and helmet added");
+  size = INV.measure(invHud, false);
+  eq(size.cells.length, 27 + 9 + 5); eq(size.h, 74 + 22 + 22); eq(size.selected, 0);
+  var helmet = size.cells.filter(function (x) { return x.slot === 39; })[0];
+  var offhand = size.cells.filter(function (x) { return x.slot === 40; })[0];
+  ok(helmet.y < size.cells.filter(function (x) { return x.slot === 9; })[0].y, "equipment row above the inventory");
+  eq(offhand.x, 4 + 8 * 18, "offhand in the last column");
+  ok(size.cells.filter(function (x) { return x.slot === 0; })[0].y > size.cells.filter(function (x) { return x.slot === 27; })[0].y, "hotbar below");
+
+  invHud.set("header", false);
+  c = invOverlay();
+  ok(!c.texts.some(function (t) { return t.s === "Inventory"; }), "title hidden");
+  ["Vanilla", "None", "Modern"].forEach(function (style) {
+    invHud.set("style", style); invHud.set("background", style !== "None");
+    eq(invOverlay().items.length, 4, style + " style draws items");
+  });
+  invSlots = {};
+  for (var s = 0; s < 36; s++) invSlots[s] = invStack(ITEM.dirt, 64);
+  invHud.set("header", true);
+  ok(invOverlay().texts.some(function (t) { return t.s === "Full"; }), "full inventory flagged");
+  invHud.reset();
+  invSlots = { 9: invStack(ITEM.cobble, 64) };
+});
+
+test("inventory HUD hides in container screens and honours the hold key", function () {
+  currentScreen = new MockContainerScreen();
+  eq(invOverlay().items.length, 0, "hidden in inventories");
+  invHud.set("hideInScreens", false);
+  eq(invOverlay().items.length, 1, "shown when the option is off");
+  invHud.set("hideInScreens", true);
+  currentScreen = null;
+
+  invHud.set("holdKey", 75);
+  eq(invOverlay().items.length, 0, "hidden until the key is held");
+  keysDown[75] = true;
+  eq(invOverlay().items.length, 1, "shown while held");
+  currentScreen = { _cb: {} };
+  eq(invOverlay().items.length, 0, "the key is ignored while typing in a screen");
+  currentScreen = null; keysDown[75] = false;
+  invHud.set("holdKey", -1);
+  worldLoaded = false;
+  eq(invOverlay().items.length, 0, "nothing outside a world");
+  worldLoaded = true;
+});
+
+test("inventory HUD highlights gains and losses, silently while rearranging", function () {
+  INV.reset();
+  fire("tick", 1);
+  eq(INV.flashes.size, 0, "first look at the inventory is silent");
+  invSlots[9] = invStack(ITEM.cobble, 65); invSlots[12] = invStack(ITEM.dirt, 1);
+  fire("tick", 2);
+  eq(INV.flashes.get(9).color, 0xFF3ECF8E, "more items flash green");
+  eq(INV.flashes.get(12).color, 0xFF3ECF8E, "new item flashes green");
+  var withFlash = invOverlay().fills;
+  delete invSlots[12]; invSlots[9] = invStack(ITEM.cobble, 10);
+  fire("tick", 3);
+  eq(INV.flashes.get(12).color, 0xFFF2685E, "removed item flashes red");
+  eq(INV.flashes.get(9).color, 0xFFF2685E, "fewer items flash red");
+  invSlots[9] = invStack(ITEM.dirt, 10);
+  fire("tick", 4);
+  eq(INV.flashes.get(9).color, IF.get("accent"), "swapped item uses the accent");
+  INV.flashes.clear();
+  eq(invOverlay().fills < withFlash, true, "flash tint drawn only while active");
+
+  currentScreen = new MockContainerScreen();
+  invSlots[20] = invStack(ITEM.sword, 1);
+  fire("tick", 5);
+  eq(INV.flashes.size, 0, "changes in a container screen are not highlighted");
+  currentScreen = null;
+  invHud.set("highlight", false);
+  delete invSlots[20];
+  fire("tick", 6);
+  eq(INV.flashes.size, 0, "highlighting can be turned off");
+  invHud.set("highlight", true);
+  mc.player.getInventory = realGetInventory;
+  var oldPlayer = mc.player;
+  mc.player = { getInventory: function () { return mockInventory; } };
+  invSlots[21] = invStack(ITEM.dirt, 5);
+  fire("tick", 7);
+  eq(INV.flashes.size, 0, "a respawned player starts silently");
+  mc.player = oldPlayer;
+});
+
+test("inventory HUD previews in the editor outside a world and stays off", function () {
+  invHud.setEnabled(false);
+  worldLoaded = false;
+  HE.open(); frames(); edRender();
+  var entry = E.state.boxes.filter(function (b) { return b.el.feature === invHud; })[0];
+  ok(entry && !entry.box.empty, "grid preview without a player");
+  eq(entry.box.w, 170);
+  ok(edFrame.texts.some(function (t) { return t.s === "Inventory"; }), "preview title drawn");
+  E.onKey("", Keyboard.KEY_ESCAPE);
+  worldLoaded = true;
+  ok(!invHud.isEnabled(), "preview never enables the feature");
 });
 
 print(passed + " tests passed");
