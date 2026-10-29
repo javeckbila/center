@@ -205,7 +205,7 @@ function rowY(labelText) { return findText(labelText).y - 7 - T.state.scroll; }
 test("module loads with interface + example modules and a /center command", function () {
   ok(center.defineFeature && center.open, "public API exported");
   ok(R.get("center") && infoHud && sprintF && R.get("auto-miner"), "features registered");
-  eq(R.all().length, 6, "interface group is hidden");
+  eq(R.all().length, 7, "interface group is hidden");
   ok(triggers.some(function (t) { return t.type === "command" && t.name === "center"; }), "/center registered");
   ok(triggers.some(function (t) { return t.type === "command" && t.name === "auto-miner"; }), "/auto-miner registered");
   eq(R.categories().join(","), "Automation,Movement,Render");
@@ -943,6 +943,106 @@ test("an Anti AFK runtime error releases keys and disables the feature", functio
   ticks(1); mc.player.getYRot = original;
   eq(mc.options.keyLeft.down, false); eq(mc.options.pauseOnLostFocus, true);
   frames(); ok(!afk.isEnabled());
+});
+
+
+test("suspension preserves Anti AFK's switch and settings without input in the lobby", function () {
+  var afk = R.get("anti-afk");
+  currentScreen = null; mc.hitResult = null;
+  afk.set("interval", 4); afk.setEnabled(true); ticks(80); ok(mc.options.keyLeft.down);
+  afk.suspend();
+  ok(afk.isEnabled()); ok(afk.isSuspended()); eq(mc.options.keyLeft.down, false);
+  eq(mc.options.pauseOnLostFocus, true);
+  fire("worldunload"); fire("serverdisconnect"); frames(); ticks(200);
+  ok(afk.isEnabled()); eq(mc.options.keyLeft.down, false);
+  afk.resume(); ok(!afk.isSuspended()); ticks(79); eq(mc.options.keyLeft.down, false);
+  ticks(1); ok(mc.options.keyLeft.down); eq(afk.get("interval"), 4);
+  afk.setEnabled(false);
+});
+test("turning off a suspended feature is respected after reconnect", function () {
+  var afk = R.get("anti-afk");
+  afk.setEnabled(true); afk.suspend(); afk.setEnabled(false, "command"); afk.resume();
+  ok(!afk.isEnabled()); ok(!afk.isSuspended()); ticks(100); eq(mc.options.keyLeft.down, false);
+});
+test("suspending Auto Miner releases it without a queued disable overriding the switch", function () {
+  var am = R.get("auto-miner"); currentScreen = null;
+  am.setEnabled(true); am.suspend(); fire("worldunload"); fire("serverdisconnect"); frames();
+  ok(am.isEnabled()); ok(am.isSuspended());
+  am.resume(); ok(am.isEnabled()); am.setEnabled(false);
+});
+
+
+test("real reconnect triggers preserve Anti AFK through the lobby and use native connection/menu APIs", function () {
+  var rc = R.get("auto-reconnect"), afk = R.get("anti-afk");
+  var originalType = Java.type, originalNow = Date.now, originalServer = mc.getCurrentServer;
+  var originalConnection = mc.getConnection, originalInv = mc.player.getInventory;
+  var originalMenu = mc.player.containerMenu, originalInventoryMenu = mc.player.inventoryMenu;
+  var originalUse = mc.gameMode.useItem, originalContainer = Player.getContainer;
+  var stamp = originalNow(), serverData = { ip: "inkmc.pl" }, brand = "INKMC.pl -> Gblock0";
+  var joins = 0, uses = 0, selected = -1, clicks = [], selector = null;
+  var inventory = { getItem: function () { return { isEmpty: () => false }; },
+    setSelectedSlot: function (slot) { selected = slot; } };
+  var inventoryMenu = {};
+  function NamedScreen(name) { this.getClass = () => ({ getSimpleName: () => name, getName: () => name }); }
+  function Disconnected() { NamedScreen.call(this, "DisconnectedScreen"); }
+  Java.type = function (name) {
+    if (name === "net.minecraft.client.gui.screens.DisconnectedScreen") return Disconnected;
+    if (name === "net.minecraft.client.gui.screens.ConnectScreen") return { startConnecting: function (parent, game, addr, server, quick, transfer) {
+      eq(parent.getClass().getSimpleName(), "JoinMultiplayerScreen", "Cancel goes to server list");
+      eq(game, mc); eq(addr, "parsed:inkmc.pl");
+      eq(server, serverData); eq(quick, false); eq(transfer, null);
+      joins++; currentScreen = new NamedScreen("ConnectScreen");
+    } };
+    if (name === "net.minecraft.client.gui.screens.TitleScreen") return function () { NamedScreen.call(this, "TitleScreen"); };
+    if (name === "net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen") return function () { NamedScreen.call(this, "JoinMultiplayerScreen"); };
+    if (name === "net.minecraft.client.multiplayer.resolver.ServerAddress") return { parseString: value => "parsed:" + value };
+    if (name === "net.minecraft.core.component.DataComponents") return { LORE: "lore" };
+    return originalType(name);
+  };
+  Date.now = () => stamp;
+  mc.getCurrentServer = () => serverData;
+  mc.getConnection = () => ({ serverBrand: () => brand });
+  mc.player.getInventory = () => inventory;
+  mc.player.inventoryMenu = inventoryMenu;
+  mc.player.containerMenu = inventoryMenu;
+  mc.gameMode.useItem = function (p, hand) { eq(p, mc.player); uses++; };
+  Player.getContainer = () => ({ click: function (slot, shift, button) {
+    clicks.push(slot); eq(shift, false); eq(button, "LEFT");
+  } });
+  function advance(ms) { stamp += ms; frames(1); }
+  try {
+    currentScreen = null; worldLoaded = true; mc.hitResult = null;
+    afk.setEnabled(true); ticks(80); ok(mc.options.keyLeft.down);
+    rc.setEnabled(true); ok(rc.isEnabled()); ok(afk.isSuspended());
+    advance(3000); ok(!afk.isSuspended()); ticks(80); ok(mc.options.keyLeft.down);
+    fire("worldunload"); worldLoaded = false; currentScreen = new Disconnected();
+    fire("guiopened", currentScreen); fire("serverdisconnect"); frames();
+    ok(afk.isEnabled()); ok(afk.isSuspended()); eq(mc.options.keyLeft.down, false);
+    advance(9999); eq(joins, 0); advance(1); eq(joins, 1);
+    worldLoaded = true; brand = "INKMC.pl -> Lobby-03"; currentScreen = null;
+    advance(1); advance(2000); eq(uses, 1); eq(selected, 0);
+    var stack = { isEmpty: () => false, getHoverName: () => ({ getString: () => "" }),
+      get: key => ({ lines: () => [{ getString: () => "Tryb: ɢᴇɴʙʟᴏᴄᴋ" }] }) };
+    var slots = [{ container: inventory, getItem: () => stack }, { container: {}, getItem: () => stack }];
+    mc.player.containerMenu = { containerId: 8, slots: { size: () => slots.length, get: i => slots[i] } };
+    currentScreen = new NamedScreen("ContainerScreen"); advance(200);
+    eq(clicks.join(","), "1", "only clicks selector slots, never inventory items");
+    eq(afk.isEnabled(), true); eq(afk.isSuspended(), true);
+    fire("worldunload"); brand = "INKMC.pl -> Gblock0";
+    mc.player.containerMenu = inventoryMenu; currentScreen = null;
+    advance(1); advance(3000);
+    ok(afk.isEnabled()); ok(!afk.isSuspended()); ticks(80); ok(mc.options.keyLeft.down);
+    fire("worldunload"); worldLoaded = false; currentScreen = new NamedScreen("TitleScreen"); frames();
+    ok(!afk.isEnabled()); advance(120000); eq(joins, 1, "manual leave is respected");
+    eq(tasks.length, 0, "does not rely on broken CT scheduling");
+  } finally {
+    rc.setEnabled(false); afk.setEnabled(false);
+    Java.type = originalType; Date.now = originalNow;
+    mc.getCurrentServer = originalServer; mc.getConnection = originalConnection;
+    mc.player.getInventory = originalInv; mc.player.containerMenu = originalMenu;
+    mc.player.inventoryMenu = originalInventoryMenu; mc.gameMode.useItem = originalUse;
+    Player.getContainer = originalContainer; currentScreen = null; worldLoaded = true;
+  }
 });
 
 // ---------- Inventory HUD ----------

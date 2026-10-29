@@ -97,6 +97,7 @@ class Feature {
     this.bind = typeof bind === "number" && bind >= NONE ? bind : NONE;
     // Non-toggleable groups (like the menu's own settings) are always on.
     this.enabled = !this.toggleable;
+    this.suspended = false;
   }
 
   setting(key) { return this.settings.find(s => s.key === key) || null; }
@@ -121,11 +122,28 @@ class Feature {
 
   isEnabled() { return this.enabled; }
 
+  isSuspended() { return this.suspended; }
+
+  // Keep the user's switch on while releasing runtime inputs during recovery.
+  suspend() {
+    if (!this.enabled || this.suspended) return;
+    this.suspended = true;
+    this.call("disable");
+  }
+
+  resume() {
+    if (!this.suspended) return;
+    this.suspended = false;
+    if (this.enabled && !this.call("enable")) this.setEnabled(false, "resume-failed");
+  }
+
+
   // source: "gui" | "key" | "command" | "load" | "api"
   setEnabled(on, source) {
     on = !!on;
     if (!this.toggleable || on === this.enabled) return this.enabled;
     this.enabled = on;
+    if (!on) this.suspended = false;
     this.triggers.forEach(t => (on ? t.register() : t.unregister()));
     const ok = this.call(on ? "enable" : "disable");
     if (on && !ok) {
@@ -157,6 +175,7 @@ class Feature {
   on(type, fn) {
     const feature = this;
     const trigger = register(type, function () {
+      if (feature.suspended) return;
       try { return fn.apply(feature, arguments); } catch (error) { feature.fail(error); }
     });
     if (!this.enabled) trigger.unregister();

@@ -65,7 +65,7 @@ let haltScreen = null;
 // is running, so the feature switch flips on the next frame.
 function disableSoon(f) {
   defer(() => {
-    if (f.isEnabled() && miner && miner.state().phase === "off") f.setEnabled(false, ID);
+    if (f.isEnabled() && !f.isSuspended() && miner && miner.state().phase === "off") f.setEnabled(false, ID);
   });
 }
 

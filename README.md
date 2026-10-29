@@ -2,6 +2,33 @@
 
 Open `/center` or press Right Shift to configure the built-in features.
 
+## Auto Reconnect
+
+Enable **Auto Reconnect** under **Automation**, or use
+`/center on auto-reconnect`. Its switch and settings persist across reloads.
+Defaults target **inkmc.pl / GenBlock**; the mode-server name is **Gblock**.
+It uses your existing premium Minecraft session and never sends `/login`.
+
+On connection loss, retries start after 10 seconds and back off to 60 seconds.
+After joining, Center waits for the lobby selector, matches the mode by its
+name or lore, clicks once, and waits for the server to confirm the selected
+mode. Failed menu opens/transfers are retried. Returning to the lobby after a
+mode restart also triggers mode selection.
+
+Anti AFK, Auto Miner and Auto Farm keep their enabled switches during
+recovery. Their inputs are released while offline, in limbo or in the lobby;
+they resume only after the chosen mode is loaded. Turning a feature off
+during recovery keeps it off. Existing tool/route checks still apply when
+mining or farming resumes; Auto Reconnect does not teleport you to a farm.
+
+Leaving the disconnect screen or canceling connection attempts cancels the
+recovery and stops paused automation. Deliberately disconnecting does not
+reconnect you. Other servers and singleplayer are left alone.
+
+Run `/ct load` to apply this update; no new mixins or game restart are required.
+Automation switches still start off on a full module reload/game restart;
+their reconnect preservation applies within the current loaded session.
+
 ## Anti AFK
 
 Enable **Anti AFK** under **Automation**, or use `/center toggle anti-afk`.
@@ -14,7 +41,8 @@ Screens and manual controls pause the actions; closing the screen or releasing
 the controls starts a fresh interval. While active it disables pause on lost
 focus, then restores your preference when paused or stopped. Switching between
 Anti AFK, Auto Miner and Auto Farm stops the previous automation. Anti AFK stops
-on disconnect, world unload and module reload, and always loads disabled.
+on disconnect/world unload unless Auto Reconnect is managing recovery. It
+always loads disabled after a module reload or game restart.
 Use `/center off anti-afk` or its assigned toggle key to stop it.
 Reload with `/ct load` to add the feature; this change adds no mixins.
 

@@ -79,7 +79,7 @@ function context() {
 
 function disableSoon(f) {
   defer(() => {
-    if (f.isEnabled() && farmer && farmer.state().phase === "off") f.setEnabled(false, ID);
+    if (f.isEnabled() && !f.isSuspended() && farmer && farmer.state().phase === "off") f.setEnabled(false, ID);
   });
 }
 

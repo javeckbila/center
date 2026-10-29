@@ -32,7 +32,7 @@ module.exports = registry.defineFeature({
     });
     const stop = () => {
       try { controller.stop(); }
-      finally { defer(() => { if (f.isEnabled()) f.setEnabled(false, "anti-afk-stop"); }); }
+      finally { defer(() => { if (f.isEnabled() && !f.isSuspended()) f.setEnabled(false, "anti-afk-stop"); }); }
     };
     f.on("tick", () => {
       try { controller.tick(); }
